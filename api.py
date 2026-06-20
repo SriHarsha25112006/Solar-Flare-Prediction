@@ -42,6 +42,23 @@ time_offset = SERVER_START_TIME - DATA_START
 df['timestamp'] = df['timestamp'] + time_offset
 df_flares['timestamp'] = df_flares['timestamp'] + time_offset
 
+# Pre-calculate flare events list at startup (takes ~1.5s once, saving 1.5s on every API request)
+all_events = []
+if len(df_flares) > 0:
+    df_flares['gap'] = df_flares['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
+    df_flares['window_id'] = df_flares['gap'].cumsum()
+    for wid, grp in df_flares.groupby('window_id'):
+        cls = int(grp['PredictedClass'].max())
+        start = grp['timestamp'].min()
+        end = grp['timestamp'].max()
+        mag = grp.loc[grp['PredictedClass'] == cls, 'MagnitudeString'].iloc[0]
+        all_events.append({
+            "start": start,
+            "end": end,
+            "class_level": cls,
+            "magnitude": str(mag)
+        })
+
 # Column position cache for faster lookup
 pred_class_col_idx = df.columns.get_loc('PredictedClass')
 timestamp_col_idx = df.columns.get_loc('timestamp')
@@ -249,32 +266,17 @@ def get_recent_flares():
     try:
         current_time = get_simulated_time()
         
-        idx = df_flares['timestamp'].searchsorted(current_time, side='right') - 1
-        if idx < 0:
-            return []
-            
-        flares = df_flares.iloc[:idx+1]
-        if len(flares) == 0:
-            return []
-            
-        flares_copy = flares.copy()
-        flares_copy['gap'] = flares_copy['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
-        flares_copy['window_id'] = flares_copy['gap'].cumsum()
-        
+        # Filter pre-calculated events that have started in simulated time
         events = []
-        for wid, grp in flares_copy.groupby('window_id'):
-            cls = int(grp['PredictedClass'].max())
-            start = grp['timestamp'].min()
-            end = grp['timestamp'].max()
-            mag = grp.loc[grp['PredictedClass'] == cls, 'MagnitudeString'].iloc[0]
-            
-            events.append({
-                "start": str(to_real_time(start)),
-                "end": str(to_real_time(end)),
-                "class_level": cls,
-                "magnitude": str(mag)
-            })
-            
+        for ev in all_events:
+            if ev['start'] <= current_time:
+                is_ongoing = current_time < ev['end']
+                events.append({
+                    "start": str(to_real_time(ev['start'])),
+                    "end": "Ongoing" if is_ongoing else str(to_real_time(ev['end'])),
+                    "class_level": ev['class_level'],
+                    "magnitude": ev['magnitude']
+                })
         return events[-10:]
     except Exception as e:
         import traceback

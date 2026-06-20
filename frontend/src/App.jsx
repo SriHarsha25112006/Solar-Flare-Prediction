@@ -553,23 +553,35 @@ function App() {
                 <table className="flare-table">
                   <thead>
                     <tr>
-                      <th>Time</th>
+                      <th>Start Time (IST)</th>
+                      <th>End Time (IST)</th>
                       <th>Class</th>
                       <th>Magnitude</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recentFlares.map((flare, idx) => (
-                      <tr key={idx}>
-                        <td>{new Date(flare.start).toLocaleString('en-US', {timeZone: 'Asia/Kolkata'})}</td>
-                        <td>
-                          <span className="flare-badge" style={{ color: flare.class_level === 3 ? 'var(--neon-red)' : 'var(--neon-orange)' }}>
-                            {flare.class_level === 3 ? 'X-CLASS' : 'M-CLASS'}
-                          </span>
-                        </td>
-                        <td style={{ color: '#fff', fontWeight: 'bold' }}>{flare.magnitude}</td>
-                      </tr>
-                    ))}
+                    {recentFlares.map((flare, idx) => {
+                      const isOngoing = flare.end === 'Ongoing';
+                      const formattedEnd = isOngoing ? 'Ongoing' : new Date(flare.end).toLocaleString('en-US', {timeZone: 'Asia/Kolkata'});
+                      return (
+                        <tr key={idx}>
+                          <td>{new Date(flare.start).toLocaleString('en-US', {timeZone: 'Asia/Kolkata'})}</td>
+                          <td style={{ color: isOngoing ? 'var(--neon-red)' : 'var(--text-muted)', fontWeight: isOngoing ? 'bold' : 'normal' }}>
+                            {isOngoing ? (
+                              <span className="blink-fast" style={{ textShadow: '0 0 5px var(--neon-red)' }}>ONGOING</span>
+                            ) : (
+                              formattedEnd
+                            )}
+                          </td>
+                          <td>
+                            <span className="flare-badge" style={{ color: flare.class_level === 3 ? 'var(--neon-red)' : 'var(--neon-orange)' }}>
+                              {flare.class_level === 3 ? 'X-CLASS' : 'M-CLASS'}
+                            </span>
+                          </td>
+                          <td style={{ color: '#fff', fontWeight: 'bold' }}>{flare.magnitude}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : (
