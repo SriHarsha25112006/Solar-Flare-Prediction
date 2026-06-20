@@ -46,6 +46,7 @@ body {
 
 /* Base Glass Container */
 .glass-panel {
+  position: relative;
   background: rgba(5, 5, 8, 0.7);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -53,6 +54,34 @@ body {
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
   color: #fff;
+  transition: border-color 0.5s ease, box-shadow 0.5s ease;
+}
+
+.glass-panel::before,
+.glass-panel::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid transparent;
+  pointer-events: none;
+  transition: border-color 0.5s ease;
+}
+
+.glass-panel::before {
+  top: -1px;
+  left: -1px;
+  border-top-color: var(--glow-color, rgba(255, 255, 255, 0.25));
+  border-left-color: var(--glow-color, rgba(255, 255, 255, 0.25));
+  border-top-left-radius: 16px;
+}
+
+.glass-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom-color: var(--glow-color, rgba(255, 255, 255, 0.25));
+  border-right-color: var(--glow-color, rgba(255, 255, 255, 0.25));
+  border-bottom-right-radius: 16px;
 }
 
 .dashboard {
@@ -800,4 +829,52 @@ body {
 
 .blink-fast {
   animation: blink-fast 1.2s infinite;
+}
+
+/* Glowing chart curves */
+.recharts-area-curve {
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+/* Custom deep space scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #050508;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  border: 2px solid #050508;
+  transition: all 0.3s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--glow-color, rgba(255, 255, 255, 0.35));
+}
+
+/* HUD Telemetry Labels and Cosmetic Tags */
+.hud-tag {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: rgba(255,255,255,0.03);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.hud-tag::before {
+  content: '[';
+  margin-right: 4px;
+  color: var(--glow-color, var(--text-muted));
+}
+
+.hud-tag::after {
+  content: ']';
+  margin-left: 4px;
+  color: var(--glow-color, var(--text-muted));
 }

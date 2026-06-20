@@ -166,7 +166,7 @@ function App() {
       <div className="scanlines"></div>
 
       <motion.div className="dashboard" variants={containerVars} initial="hidden" animate="show">
-        <motion.header className="glass-panel header" variants={itemVars}>
+        <motion.header className="glass-panel header" style={{ '--glow-color': currentColor }} variants={itemVars}>
           <h1>
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="5" />
@@ -229,9 +229,12 @@ function App() {
               <span className="section-line" style={{ background: currentColor }}></span>
             </div>
             
-            <motion.div className="glass-panel event-metrics-panel" variants={itemVars}>
+            <motion.div className="glass-panel event-metrics-panel" style={{ '--glow-color': currentColor }} variants={itemVars}>
               <div className="chart-header">
-                <div className="chart-title" style={{ color: currentColor }}>PHYSICAL AND TEMPORAL METRICS</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                  <div className="chart-title" style={{ color: currentColor }}>PHYSICAL AND TEMPORAL METRICS</div>
+                  <span className="hud-tag" style={{ '--glow-color': currentColor }}>ANALYSIS-MODE: LIVE</span>
+                </div>
                 <div className={`status-badge ${status.EventStatus === 'ACTIVE' ? 'active-event' : 'nominal-event'}`} style={{ color: currentColor, border: `1px solid ${currentColor}`, padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem' }}>
                   {status.EventStatus}
                 </div>
@@ -356,9 +359,12 @@ function App() {
               <span className="section-line"></span>
             </div>
             
-            <motion.div className="glass-panel charts-panel" variants={itemVars}>
+            <motion.div className="glass-panel charts-panel" style={{ '--glow-color': currentColor }} variants={itemVars}>
               <div className="chart-header">
-                <div className="chart-title">24H TELEMETRY LOG</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                  <div className="chart-title">24H TELEMETRY LOG</div>
+                  <span className="hud-tag" style={{ '--glow-color': '#00d2ff' }}>TELEM-FEED: SECURE</span>
+                </div>
                 
                 {/* Dynamic Sensor Toggles */}
                 <div className="sensor-toggles" style={{ display: 'flex', gap: '1rem' }}>
@@ -463,7 +469,13 @@ function App() {
               <span className="section-line" style={{ background: currentColor }}></span>
             </div>
             
-            <motion.div className="glass-panel forecast-horizon-panel" variants={itemVars}>
+            <motion.div className="glass-panel forecast-horizon-panel" style={{ '--glow-color': currentColor, padding: '1.2rem' }} variants={itemVars}>
+              <div className="chart-header" style={{ marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                  <div className="chart-title" style={{ color: currentColor }}>PROACTIVE MULTI-HORIZON RISK MATRIX</div>
+                  <span className="hud-tag" style={{ '--glow-color': 'var(--neon-green)' }}>AI-MODEL: XGB-V3.1</span>
+                </div>
+              </div>
               <div className="forecast-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.2rem', padding: '0.5rem 0' }}>
                 {[
                   { key: '15m', label: '+15 MINUTES', offsetMin: 15 },
@@ -545,9 +557,12 @@ function App() {
               <span className="section-line"></span>
             </div>
             
-            <motion.div className="glass-panel recent-flares-panel" variants={itemVars}>
+            <motion.div className="glass-panel recent-flares-panel" style={{ '--glow-color': currentColor }} variants={itemVars}>
               <div className="chart-header">
-                <div className="chart-title">CATASTROPHIC EVENT LOG</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                  <div className="chart-title">CATASTROPHIC EVENT LOG</div>
+                  <span className="hud-tag" style={{ '--glow-color': 'var(--neon-orange)' }}>HIST-RECORDER: STABLE</span>
+                </div>
               </div>
               {recentFlares.length > 0 ? (
                 <table className="flare-table">

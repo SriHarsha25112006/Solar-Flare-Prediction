@@ -1,0 +1,21 @@
+{
+  "short_name": "SolarForge",
+  "name": "SolarForge Space Weather Monitor",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    },
+    {
+      "src": "/icons.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#050508",
+  "theme_color": "#ff2a2a",
+  "display": "standalone",
+  "orientation": "any"
+}
