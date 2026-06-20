@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import time
@@ -20,11 +21,30 @@ CSV_PATH = 'predictions_output.csv.gz'
 df = pd.read_csv(CSV_PATH)
 df['timestamp'] = pd.to_datetime(df['timestamp'])
 
+# Cast columns to optimize memory usage (reduces DataFrame RAM from 280MB to 43MB)
+df['SoLEXS_COUNTS'] = df['SoLEXS_COUNTS'].astype('float32')
+df['HEL1OS_COUNTS'] = df['HEL1OS_COUNTS'].astype('float32')
+df['PredictedClass'] = df['PredictedClass'].astype('int8')
+df['CProb'] = df['CProb'].astype('float32')
+df['MProb'] = df['MProb'].astype('float32')
+df['XProb'] = df['XProb'].astype('float32')
+df['EstimatedPeakCounts'] = df['EstimatedPeakCounts'].astype('float32')
+df['MagnitudeString'] = df['MagnitudeString'].astype('category')
+df['RiskLabel'] = df['RiskLabel'].astype('category')
+
+# Pre-slice flare rows at startup to prevent heavy filtering at runtime
+df_flares = df[df['PredictedClass'] >= 2].copy()
+
 # Shift the dataset so that '2026-06-08 02:30:00' maps to the exact moment the server started.
 DATA_START = pd.to_datetime('2026-06-08 02:30:00')
 SERVER_START_TIME = pd.Timestamp.now()
 time_offset = SERVER_START_TIME - DATA_START
 df['timestamp'] = df['timestamp'] + time_offset
+df_flares['timestamp'] = df_flares['timestamp'] + time_offset
+
+# Column position cache for faster lookup
+pred_class_col_idx = df.columns.get_loc('PredictedClass')
+timestamp_col_idx = df.columns.get_loc('timestamp')
 
 # Simulation engine
 SERVER_START = time.time()
@@ -52,8 +72,8 @@ def get_status():
     try:
         current_time = get_simulated_time()
         
-        mask = df['timestamp'] <= current_time
-        if not mask.any():
+        idx = df['timestamp'].searchsorted(current_time, side='right') - 1
+        if idx < 0:
             row = df.iloc[0].to_dict()
             row['timestamp'] = str(to_real_time(row['timestamp']))
             row['WattsPerSqMeter'] = "N/A"
@@ -63,14 +83,20 @@ def get_status():
             row['EventStatus'] = "NOMINAL"
             return row
             
-        df_past = df[mask].copy()
-        last_row = df_past.iloc[-1].to_dict()
-        
-        # Ensure timestamp is string for JSON mapped to real-world time
+        last_row = df.iloc[idx].to_dict()
         last_row['timestamp'] = str(to_real_time(last_row['timestamp']))
         
+        # Ensure categories and numpy types are standard python types for JSON compatibility
+        for k, v in last_row.items():
+            if isinstance(v, (np.integer, np.floating)):
+                last_row[k] = v.item()
+            elif pd.isna(v):
+                last_row[k] = None
+            else:
+                last_row[k] = str(v)
+        
         # Calculate Watts/m2
-        mag = str(last_row.get('MagnitudeString', ''))
+        mag = last_row.get('MagnitudeString', '')
         watts = 0.0
         if len(mag) >= 2 and mag[0].upper() in ['A', 'B', 'C', 'M', 'X']:
             cls = mag[0].upper()
@@ -84,18 +110,17 @@ def get_status():
         last_row['WattsPerSqMeter'] = f"{watts:.2e}" if watts > 0 else "N/A"
         
         # Event Tracking (Start, Peak, End)
-        current_class = last_row.get('PredictedClass', 0)
+        current_class = int(last_row.get('PredictedClass', 0))
         
         if current_class >= 1:
             # We are in an active flare. Trace back to when it started.
-            active_mask = df_past['PredictedClass'] >= 1
-            # Find the last time it was 0
-            if not active_mask.all():
-                start_idx = df_past[~active_mask].index[-1] + 1
-            else:
-                start_idx = df_past.index[0]
+            start_idx = idx
+            while start_idx > 0 and df.iat[start_idx, pred_class_col_idx] >= 1:
+                start_idx -= 1
+            if df.iat[start_idx, pred_class_col_idx] == 0:
+                start_idx += 1
                 
-            event_window = df_past.loc[start_idx:]
+            event_window = df.iloc[start_idx:idx+1]
             
             last_row['EventStart'] = str(to_real_time(event_window.iloc[0]['timestamp']))
             
@@ -107,24 +132,26 @@ def get_status():
             last_row['EventStatus'] = "ACTIVE"
         else:
             # Not active. Find the last event.
-            active_mask = df_past['PredictedClass'] >= 1
-            if active_mask.any():
-                last_active_idx = df_past[active_mask].index[-1]
-                # Trace back to start of this past event
-                if not df_past.loc[:last_active_idx, 'PredictedClass'].ge(1).all():
-                    start_idx = df_past.loc[:last_active_idx][df_past.loc[:last_active_idx, 'PredictedClass'] == 0].index[-1] + 1
-                else:
-                    start_idx = df_past.index[0]
+            last_active_idx = idx
+            while last_active_idx >= 0 and df.iat[last_active_idx, pred_class_col_idx] == 0:
+                last_active_idx -= 1
+                
+            if last_active_idx >= 0:
+                start_idx = last_active_idx
+                while start_idx > 0 and df.iat[start_idx, pred_class_col_idx] >= 1:
+                    start_idx -= 1
+                if df.iat[start_idx, pred_class_col_idx] == 0:
+                    start_idx += 1
                     
-                event_window = df_past.loc[start_idx:last_active_idx]
+                event_window = df.iloc[start_idx:last_active_idx+1]
                 
                 last_row['EventStart'] = str(to_real_time(event_window.iloc[0]['timestamp']))
                 peak_row = event_window.loc[event_window['EstimatedPeakCounts'].idxmax()]
                 last_row['EventPeak'] = str(to_real_time(peak_row['timestamp']))
                 
                 # End is the first 0 after last_active_idx
-                if last_active_idx + 1 < len(df_past):
-                    last_row['EventEnd'] = str(to_real_time(df_past.loc[last_active_idx + 1, 'timestamp']))
+                if last_active_idx + 1 < len(df):
+                    last_row['EventEnd'] = str(to_real_time(df.iat[last_active_idx + 1, timestamp_col_idx]))
                 else:
                     last_row['EventEnd'] = "Unknown"
             else:
@@ -135,7 +162,6 @@ def get_status():
             last_row['EventStatus'] = "NOMINAL"
             
         # Future Predictions Lookahead (+15m, +30m, +1h, +2h) scaled by 6x simulation factor
-        # This aligns simulated lookahead with real-world clock intervals
         future_intervals = {
             "15m": current_time + timedelta(minutes=15 * 6),
             "30m": current_time + timedelta(minutes=30 * 6),
@@ -145,9 +171,9 @@ def get_status():
         
         future_forecasts = {}
         for key, future_t in future_intervals.items():
-            future_mask = df['timestamp'] >= future_t
-            if future_mask.any():
-                future_row = df[future_mask].iloc[0]
+            future_idx = df['timestamp'].searchsorted(future_t, side='left')
+            if future_idx < len(df):
+                future_row = df.iloc[future_idx]
                 c_p = float(future_row.get('CProb', 0.0))
                 m_p = float(future_row.get('MProb', 0.0))
                 x_p = float(future_row.get('XProb', 0.0))
@@ -187,12 +213,31 @@ def get_history():
     try:
         current_time = get_simulated_time()
         
-        mask = df['timestamp'] <= current_time
-        last_24h = df[mask].tail(1440).iloc[::5].copy()
+        idx = df['timestamp'].searchsorted(current_time, side='right') - 1
+        if idx < 0:
+            return []
+            
+        start_idx = max(0, idx - 1440 + 1)
+        last_24h = df.iloc[start_idx:idx+1:5].copy()
+        
         # Convert timestamp to string mapped to real-world time
-        last_24h['timestamp'] = last_24h['timestamp'].apply(lambda t: str(to_real_time(pd.to_datetime(t))))
-        return last_24h.to_dict(orient="records")
+        last_24h['timestamp'] = last_24h['timestamp'].apply(lambda t: str(to_real_time(t)))
+        
+        records = []
+        for r in last_24h.to_dict(orient="records"):
+            formatted_row = {}
+            for k, v in r.items():
+                if isinstance(v, (np.integer, np.floating)):
+                    formatted_row[k] = v.item()
+                elif pd.isna(v):
+                    formatted_row[k] = None
+                else:
+                    formatted_row[k] = str(v)
+            records.append(formatted_row)
+        return records
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 @app.get("/api/recent_flares")
@@ -200,20 +245,21 @@ def get_recent_flares():
     try:
         current_time = get_simulated_time()
         
-        mask = df['timestamp'] <= current_time
-        df_past = df[mask].copy()
-        
-        flares = df_past[df_past['PredictedClass'] >= 2].copy()
-        
+        idx = df_flares['timestamp'].searchsorted(current_time, side='right') - 1
+        if idx < 0:
+            return []
+            
+        flares = df_flares.iloc[:idx+1]
         if len(flares) == 0:
             return []
             
-        flares['gap'] = flares['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
-        flares['window_id'] = flares['gap'].cumsum()
+        flares_copy = flares.copy()
+        flares_copy['gap'] = flares_copy['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
+        flares_copy['window_id'] = flares_copy['gap'].cumsum()
         
         events = []
-        for wid, grp in flares.groupby('window_id'):
-            cls = grp['PredictedClass'].max()
+        for wid, grp in flares_copy.groupby('window_id'):
+            cls = int(grp['PredictedClass'].max())
             start = grp['timestamp'].min()
             end = grp['timestamp'].max()
             mag = grp.loc[grp['PredictedClass'] == cls, 'MagnitudeString'].iloc[0]
@@ -221,8 +267,8 @@ def get_recent_flares():
             events.append({
                 "start": str(to_real_time(start)),
                 "end": str(to_real_time(end)),
-                "class_level": int(cls),
-                "magnitude": mag
+                "class_level": cls,
+                "magnitude": str(mag)
             })
             
         return events[-10:]
