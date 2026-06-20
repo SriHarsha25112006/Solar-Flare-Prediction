@@ -1,0 +1,9 @@
+# Node dependencies (Do not commit)
+frontend/node_modules/
+
+# Python cache (Do not commit)
+__pycache__/
+.pytest_cache/
+
+# Keep frontend/dist since Render will serve it directly
+!frontend/dist/
