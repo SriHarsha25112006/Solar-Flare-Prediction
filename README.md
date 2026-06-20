@@ -263,3 +263,21 @@ To make the application fully public and operational, we set up a automated prod
 3. **Live Deployment**:
    - The project is deployed and live at: **[https://solar-flare-prediction-bscp.onrender.com](https://solar-flare-prediction-bscp.onrender.com)**
 
+---
+
+## Phase 16: RAM Optimization & OOM Crash Mitigation (Render Free Tier)
+
+To address Render's free tier memory limit (512 MB) and resolve automatic restarts due to memory exhaustion, we implemented advanced backend performance optimizations:
+
+1. **DataFrame Datatype Downcasting**:
+   - Optimized `api.py` data preloading to cast raw pandas float columns to `float32` and `PredictedClass` to `int8`.
+   - Converted string columns (`MagnitudeString` and `RiskLabel`) into pandas `category` types.
+   - Resulted in an **85% memory footprint reduction** (decreasing DataFrame RAM consumption from **280 MB down to just 43 MB**).
+
+2. **Zero-Copy Binary Search Query Engine**:
+   - Replaced heavy runtime `.copy()` row-filters (which duplicated up to 1.2M rows per request) with a $O(\log N)$ binary search engine using `searchsorted()`.
+   - Rewrote all backend endpoints (`/api/status`, `/api/history`, and `/api/recent_flares`) to perform in-place index lookups and walk-back slices on memory views rather than allocating duplicate DataFrames.
+   - Pre-sliced flare datasets at startup (`df_flares = df[df['PredictedClass'] >= 2].copy()`) to optimize list querying for the historical events endpoint.
+   - Ensured all responses are converted to native Python types (resolving numpy-to-JSON serialization errors).
+
+
