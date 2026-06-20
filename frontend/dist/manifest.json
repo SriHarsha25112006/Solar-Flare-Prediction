@@ -3,14 +3,14 @@
   "name": "SolarForge Space Weather Monitor",
   "icons": [
     {
-      "src": "/favicon.svg",
-      "type": "image/svg+xml",
-      "sizes": "any"
+      "src": "/favicon.png",
+      "type": "image/png",
+      "sizes": "192x192"
     },
     {
-      "src": "/icons.svg",
-      "type": "image/svg+xml",
-      "sizes": "any"
+      "src": "/app-icon.png",
+      "type": "image/png",
+      "sizes": "512x512"
     }
   ],
   "start_url": "/",
