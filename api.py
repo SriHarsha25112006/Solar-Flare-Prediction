@@ -88,7 +88,9 @@ def get_status():
         
         # Ensure categories and numpy types are standard python types for JSON compatibility
         for k, v in last_row.items():
-            if isinstance(v, (np.integer, np.floating)):
+            if isinstance(v, (int, float)):
+                pass
+            elif isinstance(v, (np.integer, np.floating)):
                 last_row[k] = v.item()
             elif pd.isna(v):
                 last_row[k] = None
@@ -227,7 +229,9 @@ def get_history():
         for r in last_24h.to_dict(orient="records"):
             formatted_row = {}
             for k, v in r.items():
-                if isinstance(v, (np.integer, np.floating)):
+                if isinstance(v, (int, float)):
+                    formatted_row[k] = v
+                elif isinstance(v, (np.integer, np.floating)):
                     formatted_row[k] = v.item()
                 elif pd.isna(v):
                     formatted_row[k] = None
