@@ -111,12 +111,22 @@ function App() {
       const fullDate = item ? item.fullDate : label;
       
       return (
-        <div className="glass-panel" style={{ padding: '1rem', border: `1px solid ${currentColor}`, background: 'rgba(0,0,0,0.8)' }}>
-          <p className="stat-label" style={{ color: '#fff', marginBottom: '0.5rem' }}>{fullDate}</p>
+        <div 
+          className="hud-tooltip" 
+          style={{ 
+            '--tooltip-border': currentColor,
+            '--tooltip-glow': currentColor,
+            borderColor: currentColor
+          }}
+        >
+          <div className="hud-tooltip-title">{fullDate}</div>
           {payload.map((entry, index) => (
-            <p key={index} style={{ color: entry.color, fontFamily: 'var(--font-mono)' }}>
-              {entry.name}: {entry.value.toFixed(1)}
-            </p>
+            <div key={index} className="hud-tooltip-row" style={{ color: entry.color }}>
+              <span className="hud-tooltip-label">{entry.name}</span>
+              <span className="hud-tooltip-value">
+                {entry.value.toFixed(1)} <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>cps</span>
+              </span>
+            </div>
           ))}
         </div>
       );
@@ -435,7 +445,11 @@ function App() {
                     </defs>
                     <XAxis dataKey="time" stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} minTickGap={40} />
                     <YAxis stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} />
-                    <Tooltip content={<CustomTooltip />} />
+                    <Tooltip 
+                      content={<CustomTooltip />} 
+                      isAnimationActive={false} 
+                      cursor={{ stroke: 'rgba(255, 255, 255, 0.12)', strokeWidth: 1 }} 
+                    />
                     
                     {/* Alert Threshold Line */}
                     <ReferenceLine 
