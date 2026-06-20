@@ -246,3 +246,20 @@ To optimize layout hierarchy and fulfill design requirements, we executed a comp
 3. **Multi-Horizon AI Forecast Lookahead**:
    - Upgraded `api.py` to calculate future simulated timestamps for T+15m, T+30m, T+1h, and T+2h, lookup future dataset rows, and return a nested dictionary.
    - Created the **AI Forecast Horizon** panel, rendering 4 horizontal lookahead cards with real-time risk markers, magnitude outputs, and multi-class probability breakdown progress bars.
+
+---
+
+## Phase 15: Production Deployment & 404 Resolution (Render)
+
+To make the application fully public and operational, we set up a automated production pipeline on Render:
+
+1. **FastAPI Static Mount**:
+   - Configured `api.py` to dynamically check for and serve the compiled static build at `frontend/dist` using FastAPI's `StaticFiles` mounting at `/`.
+   - Both the backend API and the frontend are served on the same single port (port 10000 on Render).
+
+2. **Gitignore Adjustment**:
+   - Commented out the `dist` ignore pattern in `frontend/.gitignore` so that the compiled production bundle (`frontend/dist`) is tracked in the repository and available for Render.
+
+3. **Live Deployment**:
+   - The project is deployed and live at: **[https://solar-flare-prediction-bscp.onrender.com](https://solar-flare-prediction-bscp.onrender.com)**
+
