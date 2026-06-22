@@ -2,3 +2,8 @@ fastapi
 uvicorn
 pandas
 aiofiles
+lightgbm
+scikit-learn
+scipy
+pyarrow
+numpy
