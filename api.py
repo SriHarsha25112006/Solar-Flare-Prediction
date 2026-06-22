@@ -33,27 +33,10 @@ app.add_middleware(
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loading & preprocessing (runs once at startup)
 # ─────────────────────────────────────────────────────────────────────────────
-PARQUET_PATH = 'dataset.parquet'
+CSV_PATH = 'predictions_output.csv.gz'
 
-print(f"[SolarForge] Loading telemetry from {PARQUET_PATH}...")
-_needed_cols = [
-    'timestamp', 'SoLEXS_COUNTS', 'HEL1OS_COUNTS',
-    'PredictedClass', 'CProb', 'MProb', 'XProb',
-    'EstimatedPeakCounts', 'MagnitudeString', 'RiskLabel'
-]
-try:
-    df = pd.read_parquet(PARQUET_PATH, columns=_needed_cols)
-except Exception:
-    # If dataset has fewer columns, load all and add missing ones
-    df = pd.read_parquet(PARQUET_PATH)
-    for col in _needed_cols:
-        if col not in df.columns:
-            if col in ('CProb', 'MProb', 'XProb', 'EstimatedPeakCounts'):
-                df[col] = 0.0
-            elif col in ('MagnitudeString', 'RiskLabel'):
-                df[col] = 'N/A'
-            elif col == 'PredictedClass':
-                df[col] = 0
+print(f"[SolarForge] Loading telemetry from {CSV_PATH}...")
+df = pd.read_csv(CSV_PATH)
 
 print(f"[SolarForge] Loaded {len(df):,} rows.")
 

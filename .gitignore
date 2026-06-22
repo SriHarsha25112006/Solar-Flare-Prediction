@@ -5,11 +5,9 @@ frontend/node_modules/
 __pycache__/
 .pytest_cache/
 
-# Large data files (too large for GitHub — store locally or via LFS)
+# Large raw data files (too large for GitHub — local only)
 dataset.parquet
 *.parquet
-*.csv.gz
-*.csv
 
 # Keep frontend/dist since Render will serve it directly
 !frontend/dist/
