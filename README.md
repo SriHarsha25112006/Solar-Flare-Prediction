@@ -1,5 +1,7 @@
 # Aditya-L1 Project Workflow & Master Combination
 
+**GitHub Repository**: [SriHarsha25112006/Solar-Flare-Prediction](https://github.com/SriHarsha25112006/Solar-Flare-Prediction)
+
 ## Phase 1: High-Velocity Data Ingestion
 To handle the massive scale of orbital telemetry, we discarded traditional CSV processing. We engineered an **Out-Of-Core execution pipeline using DuckDB**.
 - **The Challenge**: The raw telemetry from the satellite consists of millions of 1-second X-ray flux readings spanning years of data, which exceeds standard RAM limits.
