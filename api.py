@@ -1,7 +1,7 @@
 """
 api.py — SolarForge Simulated API Backend
 =============================================
-Serves pre-computed predictions at 6x speed using historical Aditya-L1 data.
+Serves pre-computed predictions at 10x speed using historical Aditya-L1 data.
 """
 
 import os
@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 warnings.filterwarnings('ignore')
 
-app = FastAPI(title="SolarForge API (6x Simulation)", version="3.1.0")
+app = FastAPI(title="SolarForge API (10x Simulation)", version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,7 +29,7 @@ app.add_middleware(
 # Data Loading & Simulation Time Sync
 # ─────────────────────────────────────────────────────────────────────────────
 CSV_PATH = 'predictions_output.csv.gz'
-SAMPLES_PER_SECOND = 6.0
+SAMPLES_PER_SECOND = 10.0
 
 print(f"[SolarForge] Loading telemetry from {CSV_PATH}...")
 try:
@@ -91,21 +91,37 @@ COUNTS_C_THRESH  = 1000
 COUNTS_M_THRESH  = 5000
 COUNTS_X_THRESH  = 20000
 
-def counts_to_display_class(counts: float) -> int:
-    """Return the GOES class supported by the actual telemetry counts."""
-    if counts >= COUNTS_X_THRESH: return 3
-    if counts >= COUNTS_M_THRESH: return 2
-    if counts >= COUNTS_C_THRESH: return 1
-    return 0
+def get_event_peak_counts(df, idx):
+    """Find the peak counts of the flare event associated with index idx."""
+    if df.empty: return 0.0
+    classes = df['PredictedClass'].values
+    cls = int(classes[idx])
+    if cls == 0:
+        return 0.0
+        
+    # Find start of predicted event
+    start_i = idx
+    while start_i > 0 and classes[start_i - 1] >= 1:
+        start_i -= 1
+        
+    # Find end of predicted event
+    end_i = idx
+    while end_i < len(df) - 1 and classes[end_i + 1] >= 1:
+        end_i += 1
+        
+    # Extend the window slightly forward to capture the peak of the physical counts
+    # (sometimes the counts peak slightly after the model's predicted class goes back to 0)
+    end_i = min(len(df) - 1, end_i + 6) # 30 mins lookahead
+    
+    window = df.iloc[start_i : end_i + 1]
+    return float(window['SoLEXS_COUNTS'].max())
 
 def make_magnitude_val(model_cls: int, counts: float) -> str:
-    """Build a magnitude string that is always physically consistent with counts."""
-    # Cap the displayed class to what the counts can actually support
-    display_cls = min(model_cls, counts_to_display_class(counts))
-    if display_cls == 0: return 'NOMINAL'
-    if display_cls == 1: return f"C{min(counts/COUNTS_C_THRESH,  9.9):.1f}"
-    if display_cls == 2: return f"M{min(counts/COUNTS_M_THRESH,  9.9):.1f}"
-    return f"X{min(counts/COUNTS_X_THRESH, 9.9):.1f}"
+    """Build a magnitude string that is consistent with the predicted class."""
+    if model_cls == 0: return 'NOMINAL'
+    if model_cls == 1: return f"C{max(1.0, min(counts/COUNTS_C_THRESH,  9.9)):.1f}"
+    if model_cls == 2: return f"M{max(1.0, min(counts/COUNTS_M_THRESH,  9.9)):.1f}"
+    return f"X{max(1.0, min(counts/COUNTS_X_THRESH, 9.9)):.1f}"
 
 THRESHOLDS = {
     "15m": {"C": 0.0600, "M": 0.0100, "X": 0.0500},
@@ -174,32 +190,27 @@ def get_status():
         row = {k: _safe(v) for k, v in _df.iloc[idx].to_dict().items()}
         row['timestamp'] = str(sim_time) # Return the exact simulation time
         row['last_refreshed'] = str(pd.Timestamp.now())
-        row['data_source'] = f"Aditya-L1 (6x Simulation Loop)"
+        row['data_source'] = f"Aditya-L1 (10x Simulation Loop)"
         row['current_idx'] = idx
         row['total_rows'] = len(_df)
         
         risk_map_main = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
         cls_model = int(row['PredictedClass'])  # what the ML model predicted
 
-        # Peak counts in the 15-minute lookahead window (3 samples at 5-min cadence)
-        peak_window_main = _df.iloc[idx : idx + 4]
-        peak_counts_main = float(peak_window_main['SoLEXS_COUNTS'].max())
+        # Peak counts of the main event
+        peak_counts_main = get_event_peak_counts(_df, idx)
 
-        # The DISPLAYED class is capped by what the telemetry physically supports.
-        # This prevents X-CLASS being shown when counts are ~0 at start of event.
-        display_cls = min(cls_model, counts_to_display_class(peak_counts_main))
+        # Use the model predicted class directly
+        row['RiskLabel'] = risk_map_main.get(cls_model, 'NOMINAL')
+        row['PredictedClass'] = cls_model
 
-        # Override RiskLabel using the display class (telemetry-gated)
-        row['RiskLabel'] = risk_map_main.get(display_cls, 'NOMINAL')
-        row['PredictedClass'] = display_cls  # keep frontend consistent
-
-        # Magnitude is always physically meaningful
+        # Magnitude matches the model class and event peak counts
         row['MagnitudeString'] = make_magnitude_val(cls_model, peak_counts_main)
 
-        # Synchronize probability matrix to match the display class
+        # Synchronize probability matrix to match the model class
         nom, c, m, x = synchronize_probs(
             float(row['CProb']), float(row['MProb']), float(row['XProb']),
-            display_cls, 0.0600, 0.0100, 0.0500
+            cls_model, 0.0600, 0.0100, 0.0500
         )
         row['CProb'] = c
         row['MProb'] = m
@@ -254,27 +265,24 @@ def get_status():
                     x_prob = float(_df.iloc[idx][f"XProb_{h}"])
                     cls = int(_df.iloc[idx][f"PredClass_{h}"])
                     
-                    # Look ahead to find the peak count within this horizon window
+                    # Look ahead to find the peak count of the flare event predicted at target_idx
                     offset = offset_map[h]
-                    future_window = _df.iloc[idx : idx + offset + 1]
-                    future_counts = float(future_window["SoLEXS_COUNTS"].max())
+                    target_idx = idx + offset
+                    peak_counts_h = get_event_peak_counts(_df, target_idx) if cls >= 1 else 0.0
 
-                    # Gate displayed class on what future counts physically support
-                    display_cls_h = min(cls, counts_to_display_class(future_counts))
-
-                    # Synchronize the forecast probabilities using the gated class
+                    # Synchronize the forecast probabilities using the model class directly
                     tc = THRESHOLDS[h]["C"]
                     tm = THRESHOLDS[h]["M"]
                     tx = THRESHOLDS[h]["X"]
-                    nom_s, c_s, m_s, x_s = synchronize_probs(c_prob, m_prob, x_prob, display_cls_h, tc, tm, tx)
+                    nom_s, c_s, m_s, x_s = synchronize_probs(c_prob, m_prob, x_prob, cls, tc, tm, tx)
 
                     future_forecasts[h] = {
                         "CProb": c_s,
                         "MProb": m_s,
                         "XProb": x_s,
                         "SafeProb": nom_s,
-                        "RiskLabel": risk_map[display_cls_h],
-                        "MagnitudeString": make_magnitude_val(cls, future_counts)
+                        "RiskLabel": risk_map[cls],
+                        "MagnitudeString": make_magnitude_val(cls, peak_counts_h)
                     }
                 row['FutureForecasts'] = future_forecasts
             except Exception as e:
@@ -308,24 +316,19 @@ def get_history():
         
         records = []
         for i, r in zip(hist_df.index, hist_df.to_dict(orient="records")):
-            # Compute lookahead peak counts for this historical sample
             cls_model_h = int(r['PredictedClass'])
-            peak_window = _df.iloc[i : i + 4] # 15 min lookahead (3 steps)
-            peak_counts = float(peak_window['SoLEXS_COUNTS'].max())
+            peak_counts = get_event_peak_counts(_df, i) if cls_model_h >= 1 else 0.0
             
-            # Gate class on actual counts
-            display_cls_h = min(cls_model_h, counts_to_display_class(peak_counts))
-
-            # Synchronize historical probabilities to match the gated display class
+            # Synchronize historical probabilities to match the model class directly
             nom_s, c_s, m_s, x_s = synchronize_probs(
                 float(r['CProb']), float(r['MProb']), float(r['XProb']),
-                display_cls_h, 0.0600, 0.0100, 0.0500
+                cls_model_h, 0.0600, 0.0100, 0.0500
             )
             
             risk_map_h = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
             r_safe = {k: _safe(v) for k, v in r.items()}
-            r_safe['PredictedClass'] = display_cls_h
-            r_safe['RiskLabel'] = risk_map_h[display_cls_h]
+            r_safe['PredictedClass'] = cls_model_h
+            r_safe['RiskLabel'] = risk_map_h[cls_model_h]
             r_safe['CProb'] = c_s
             r_safe['MProb'] = m_s
             r_safe['XProb'] = x_s
@@ -349,24 +352,19 @@ def get_recent_flares():
         flare_df = flare_df[flare_df['PredictedClass'] >= 1].copy()
         
         if flare_df.empty: return []
-
+ 
         flare_df['gap'] = flare_df['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
         flare_df['window_id'] = flare_df['gap'].cumsum()
-
+ 
         events = []
         for _, grp in flare_df.groupby('window_id'):
-            cls_model_e = int(grp['PredictedClass'].max())
-            # Gate class by the actual peak counts achieved during the event
+            cls = int(grp['PredictedClass'].max())
             peak_counts = float(grp['SoLEXS_COUNTS'].max())
-            display_cls_e = min(cls_model_e, counts_to_display_class(peak_counts))
-            # Skip events where counts don't even reach C-class level
-            if display_cls_e == 0:
-                continue
-            mag = make_magnitude_val(cls_model_e, peak_counts)
+            mag = make_magnitude_val(cls, peak_counts)
             events.append({
                 "start": str(grp['timestamp'].min()),
                 "end": str(grp['timestamp'].max()),
-                "class_level": display_cls_e,
+                "class_level": cls,
                 "magnitude": mag
             })
         return events[-10:]
@@ -380,7 +378,7 @@ def health():
     sim_time = _df.iloc[idx]['timestamp'] if not _df.empty else pd.Timestamp.now()
     return {
         "status": "online",
-        "mode": "6x Simulation",
+        "mode": "10x Simulation",
         "current_sim_time": str(sim_time),
         "data_rows": len(_df)
     }
