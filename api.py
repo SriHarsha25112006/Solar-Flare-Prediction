@@ -88,9 +88,61 @@ def _safe(v):
 
 def make_magnitude_val(cls, counts):
     if cls == 0: return 'NOMINAL'
-    if cls == 1: return f"C{max(1.0, min(counts/1000,  9.9)):.1f}"
-    if cls == 2: return f"M{max(1.0, min(counts/5000,  9.9)):.1f}"
-    return     f"X{max(1.0, min(counts/20000, 9.9)):.1f}"
+    if cls == 1: return f"C{min(counts/1000,  9.9):.1f}"
+    if cls == 2: return f"M{min(counts/5000,  9.9):.1f}"
+    return     f"X{min(counts/20000, 9.9):.1f}"
+
+THRESHOLDS = {
+    "15m": {"C": 0.0600, "M": 0.0100, "X": 0.0500},
+    "30m": {"C": 0.1100, "M": 0.0070, "X": 0.0200},
+    "1h":  {"C": 0.0500, "M": 0.0070, "X": 0.2500},
+    "2h":  {"C": 0.0600, "M": 0.0100, "X": 0.0700},
+    "4h":  {"C": 0.0200, "M": 0.0010, "X": 0.0800}
+}
+
+def synchronize_probs(c_prob, m_prob, x_prob, pred_class, thresh_c, thresh_m, thresh_x):
+    raw_nom = max(0.0, 1.0 - max(c_prob, m_prob, x_prob))
+    
+    if pred_class == 0:
+        total = raw_nom + c_prob + m_prob + x_prob
+        if total == 0: return 1.0, 0.0, 0.0, 0.0
+        return raw_nom/total, c_prob/total, m_prob/total, x_prob/total
+        
+    if pred_class == 1:
+        target_prob = c_prob
+        thresh = thresh_c
+    elif pred_class == 2:
+        target_prob = m_prob
+        thresh = thresh_m
+    else:
+        target_prob = x_prob
+        thresh = thresh_x
+        
+    scale_range = 1.0 - thresh
+    excess = max(0.0, target_prob - thresh)
+    new_target_prob = 0.55 + 0.40 * (excess / scale_range if scale_range > 0 else 0.0)
+    new_target_prob = min(0.99, new_target_prob)
+    
+    rem = 1.0 - new_target_prob
+    if pred_class == 1:
+        others = {'nom': raw_nom, 'm': m_prob, 'x': x_prob}
+    elif pred_class == 2:
+        others = {'nom': raw_nom, 'c': c_prob, 'x': x_prob}
+    else:
+        others = {'nom': raw_nom, 'c': c_prob, 'm': m_prob}
+        
+    sum_others = sum(others.values())
+    if sum_others > 0:
+        others = {k: rem * (v / sum_others) for k, v in others.items()}
+    else:
+        others = {k: rem / 3.0 for k in others.keys()}
+        
+    new_nom = others.get('nom', 0.0)
+    new_c = new_target_prob if pred_class == 1 else others.get('c', 0.0)
+    new_m = new_target_prob if pred_class == 2 else others.get('m', 0.0)
+    new_x = new_target_prob if pred_class == 3 else others.get('x', 0.0)
+    
+    return new_nom, new_c, new_m, new_x
 
 # ─────────────────────────────────────────────────────────────────────────────
 # API Endpoints
@@ -115,8 +167,18 @@ def get_status():
         risk_map_main = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
         row['RiskLabel'] = risk_map_main.get(int(row['PredictedClass']), 'NOMINAL')
         
-        # Override MagnitudeString dynamically based on the peak counts in the 15-minute lookahead window
+        # Synchronize main probabilities to line up with the predicted class
         cls_main = int(row['PredictedClass'])
+        nom, c, m, x = synchronize_probs(
+            float(row['CProb']), float(row['MProb']), float(row['XProb']),
+            cls_main, 0.0600, 0.0100, 0.0500
+        )
+        row['CProb'] = c
+        row['MProb'] = m
+        row['XProb'] = x
+        row['SafeProb'] = nom
+
+        # Override MagnitudeString dynamically based on the peak counts in the 15-minute lookahead window
         peak_window_main = _df.iloc[idx : idx + 4] # 15 minutes is 3 samples (5-minute cadence)
         peak_counts_main = float(peak_window_main['SoLEXS_COUNTS'].max())
         row['MagnitudeString'] = make_magnitude_val(cls_main, peak_counts_main)
@@ -168,7 +230,12 @@ def get_status():
                     m_prob = float(_df.iloc[idx][f"MProb_{h}"])
                     x_prob = float(_df.iloc[idx][f"XProb_{h}"])
                     cls = int(_df.iloc[idx][f"PredClass_{h}"])
-                    safe_prob = float(1.0 - max(c_prob, m_prob, x_prob))
+                    
+                    # Synchronize the forecast probabilities
+                    tc = THRESHOLDS[h]["C"]
+                    tm = THRESHOLDS[h]["M"]
+                    tx = THRESHOLDS[h]["X"]
+                    nom_s, c_s, m_s, x_s = synchronize_probs(c_prob, m_prob, x_prob, cls, tc, tm, tx)
                     
                     # Look ahead to find the peak count within this horizon window
                     offset = offset_map[h]
@@ -176,10 +243,10 @@ def get_status():
                     future_counts = float(future_window["SoLEXS_COUNTS"].max())
 
                     future_forecasts[h] = {
-                        "CProb": c_prob,
-                        "MProb": m_prob,
-                        "XProb": x_prob,
-                        "SafeProb": safe_prob,
+                        "CProb": c_s,
+                        "MProb": m_s,
+                        "XProb": x_s,
+                        "SafeProb": nom_s,
                         "RiskLabel": risk_map[cls],
                         "MagnitudeString": make_magnitude_val(cls, future_counts)
                     }
@@ -220,8 +287,17 @@ def get_history():
             peak_window = _df.iloc[i : i + 4] # 15 min lookahead (3 steps)
             peak_counts = float(peak_window['SoLEXS_COUNTS'].max())
             
+            # Synchronize historical probabilities to match the prediction
+            nom_s, c_s, m_s, x_s = synchronize_probs(
+                float(r['CProb']), float(r['MProb']), float(r['XProb']),
+                cls, 0.0600, 0.0100, 0.0500
+            )
+            
             # Override fields
             r_safe = {k: _safe(v) for k, v in r.items()}
+            r_safe['CProb'] = c_s
+            r_safe['MProb'] = m_s
+            r_safe['XProb'] = x_s
             r_safe['MagnitudeString'] = make_magnitude_val(cls, peak_counts)
             records.append(r_safe)
         return records
