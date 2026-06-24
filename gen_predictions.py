@@ -158,7 +158,7 @@ def make_magnitude(row):
     return     f"X{min(counts/20000, 9.9):.1f}"
 
 df['MagnitudeString']     = df.apply(make_magnitude, axis=1)
-df['RiskLabel']           = df['PredictedClass'].map({0:'NOMINAL',1:'LOW',2:'MODERATE',3:'CRITICAL'})
+df['RiskLabel']           = df['PredictedClass'].map({0:'NOMINAL',1:'C-CLASS',2:'M-CLASS',3:'X-CLASS'})
 df['EstimatedPeakCounts'] = df['SoLEXS_COUNTS'].astype('float32')
 
 # Build the output columns list including all horizon numeric columns

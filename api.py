@@ -104,6 +104,15 @@ def get_status():
         row['data_source'] = f"Aditya-L1 (6x Simulation Loop)"
         row['current_idx'] = idx
         row['total_rows'] = len(_df)
+        
+        # Override RiskLabel dynamically to ensure frontend gets correct C-CLASS/M-CLASS/X-CLASS
+        risk_map_main = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
+        row['RiskLabel'] = risk_map_main.get(int(row['PredictedClass']), 'NOMINAL')
+        
+        # Calculate WattsPerSqMeter dynamically from SoLEXS_COUNTS (approx. 5e-9 W/m² per count)
+        counts = float(row.get('SoLEXS_COUNTS', 0.0))
+        flux = max(1.0e-8, counts * 5.0e-9)
+        row['WattsPerSqMeter'] = f"{flux:.2e}"
 
         # Event tracking
         classes = _df['PredictedClass'].values
@@ -145,7 +154,7 @@ def get_status():
                     if cls == 2: return f"M{min(counts/5000,  9.9):.1f}"
                     return     f"X{min(counts/20000, 9.9):.1f}"
 
-                risk_map = {0: 'NOMINAL', 1: 'LOW', 2: 'MODERATE', 3: 'CRITICAL'}
+                risk_map = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
                 future_forecasts = {}
                 for h in ["15m", "30m", "1h", "2h", "4h"]:
                     c_prob = float(_df.iloc[idx][f"CProb_{h}"])
