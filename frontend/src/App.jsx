@@ -71,6 +71,8 @@ function App() {
         setHistory(formattedHistory);
       } catch (error) {
         console.error("Error fetching data:", error);
+      } finally {
+        if (isMounted) setLoading(false);
       }
     };
 
