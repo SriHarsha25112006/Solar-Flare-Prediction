@@ -316,7 +316,6 @@ def get_status():
         import traceback; traceback.print_exc()
         return {"error": str(e)}
 
-@app.get("/api/history")
 import functools
 
 @functools.lru_cache(maxsize=4)
