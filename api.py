@@ -205,6 +205,8 @@ def get_status():
         row['data_source'] = f"Aditya-L1 (10x Simulation Loop)"
         row['current_idx'] = idx
         row['total_rows'] = len(_df)
+        row['MinTimestamp'] = str(_df.iloc[0]['timestamp']) if not _df.empty else "2024-02-01 00:00:00"
+        row['MaxTimestamp'] = str(_df.iloc[-1]['timestamp']) if not _df.empty else "2026-06-16 23:59:03"
         
         risk_map_main = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
         cls_model = int(row['PredictedClass'])  # what the ML model predicted
@@ -416,6 +418,16 @@ def set_time(timestamp: str):
     except Exception as e:
         print(f"[SolarForge] Time travel error: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/warp_presets")
+def get_warp_presets():
+    return [
+        {"name": "Telemetry Start", "timestamp": "2024-02-01 00:00:00", "description": "Baseline Nominal State"},
+        {"name": "Peak SoLEXS Flare (X1.4)", "timestamp": "2024-05-14 16:45:00", "description": "Peak X-class flare (28,460 cps)"},
+        {"name": "First HEL1OS Activity", "timestamp": "2024-07-01 00:30:00", "description": "HEL1OS sensor activates online"},
+        {"name": "Peak HEL1OS Event (M4.8)", "timestamp": "2026-02-01 23:50:00", "description": "Catastrophic HEL1OS peak (116,939 cps)"}
+    ]
 
 
 @app.get("/api/health")

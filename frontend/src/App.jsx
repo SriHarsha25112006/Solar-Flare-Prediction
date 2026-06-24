@@ -13,7 +13,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [showSoLEXS, setShowSoLEXS] = useState(true);
   const [showHEL1OS, setShowHEL1OS] = useState(true);
-  const [warpTime, setWarpTime] = useState('');
+  const [warpTimeInput, setWarpTimeInput] = useState('');
+  const [warpPresets, setWarpPresets] = useState([]);
 
   const calculateDuration = () => {
     if (!status || !status.EventStart || status.EventStart === 'N/A') return 'N/A';
@@ -52,7 +53,13 @@ function App() {
         axios.get(`${API_URL}/recent_flares`)
       ]);
       
-      setStatus(statusRes.data);
+      const statusData = statusRes.data;
+      setStatus(statusData);
+      
+      // Initialize date input once when empty
+      if (statusData && statusData.timestamp && !warpTimeInput) {
+        setWarpTimeInput(statusData.timestamp.replace(' ', 'T').slice(0, 16));
+      }
       
       // Ensure we don't crash if the backend returns an error object instead of an array
       const safeRecentFlares = Array.isArray(recentRes.data) ? recentRes.data : [];
@@ -78,21 +85,45 @@ function App() {
     }
   };
 
-  const handleTimeTravel = async () => {
-    if (!warpTime) return;
+  const handleTimeTravel = async (targetTime) => {
+    const timeToWarp = targetTime || warpTimeInput;
+    if (!timeToWarp) return;
     try {
-      // Convert datetime-local YYYY-MM-DDTHH:MM to YYYY-MM-DD HH:MM:00
-      const formattedTime = warpTime.replace('T', ' ') + ':00';
-      await axios.post(`${API_URL}/set_time?timestamp=${encodeURIComponent(formattedTime)}`);
-      setWarpTime(''); // Reset to track current simulation time
-      fetchData();
+      setLoading(true);
+      // Format to YYYY-MM-DD HH:MM:00
+      const formattedTime = timeToWarp.replace('T', ' ').slice(0, 19);
+      const queryTime = formattedTime.includes(':') && formattedTime.length === 16 ? formattedTime + ':00' : formattedTime;
+      
+      await axios.post(`${API_URL}/set_time?timestamp=${encodeURIComponent(queryTime)}`);
+      
+      // If a preset was clicked, sync the input box to it
+      if (targetTime) {
+        setWarpTimeInput(targetTime.replace(' ', 'T').slice(0, 16));
+      }
+      
+      await fetchData();
     } catch (error) {
       console.error("Error warping time:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
     let isMounted = true;
+    
+    const fetchPresets = async () => {
+      try {
+        const res = await axios.get(`${API_URL}/warp_presets`);
+        if (isMounted && Array.isArray(res.data)) {
+          setWarpPresets(res.data);
+        }
+      } catch (err) {
+        console.error("Error fetching presets:", err);
+      }
+    };
+    
+    fetchPresets();
     
     const fetchLoop = async () => {
       if (!isMounted) return;
@@ -205,52 +236,91 @@ function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
             <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
               <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}, 0 0 24px ${currentColor}` }}></div>
-              SIMULATION RUNNING (10x) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
-            </div>
-            
-            {/* Time Travel Input */}
-            <div className="time-travel-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(5, 5, 8, 0.6)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)' }}>
-              <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.5px' }}>WARP:</span>
-              <input 
-                type="datetime-local" 
-                value={warpTime || (status && status.timestamp ? status.timestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00')}
-                onChange={(e) => setWarpTime(e.target.value)}
-                min="2024-02-01T00:00"
-                max="2024-02-07T23:55"
-                style={{ 
-                  background: 'transparent', 
-                  border: 'none', 
-                  color: '#fff', 
-                  fontFamily: 'var(--font-mono)', 
-                  fontSize: '0.75rem', 
-                  outline: 'none',
-                  cursor: 'pointer',
-                  width: '140px'
-                }} 
-              />
-              <button 
-                onClick={handleTimeTravel}
-                style={{ 
-                  background: currentColor, 
-                  color: '#000', 
-                  border: 'none', 
-                  padding: '0.2rem 0.6rem', 
-                  borderRadius: '4px', 
-                  fontSize: '0.72rem', 
-                  fontFamily: 'var(--font-mono)', 
-                  fontWeight: 'bold', 
-                  cursor: 'pointer',
-                  boxShadow: `0 0 8px ${currentColor}`,
-                  transition: 'all 0.3s ease'
-                }}
-              >
-                JUMP
-              </button>
+              SIMULATION ACTIVE (10x) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
             </div>
           </div>
         </motion.header>
 
         <div className="grid">
+          {/* SECTION 00: TEMPORAL WARP NAVIGATION DECK */}
+          <div className="section-container">
+            <div className="section-header-block">
+              <span className="section-number">00 //</span>
+              <h2 className="section-title-text">TEMPORAL WARP NAVIGATION DECK</h2>
+              <span className="section-line" style={{ background: currentColor }}></span>
+            </div>
+            
+            <motion.div className="glass-panel temporal-warp-card" style={{ '--glow-color': currentColor }} variants={itemVars}>
+              {/* Left Column: Clock Display */}
+              <div className="warp-column">
+                <div className="warp-clock-display">
+                  <span className="warp-clock-label">Simulated Time Clock</span>
+                  <div className="warp-clock-time">{status.timestamp ? status.timestamp.split(' ')[1] : '00:00:00'}</div>
+                  <div className="warp-clock-bounds font-mono">
+                    <div style={{ color: currentColor, fontWeight: 'bold' }}>DATE: {status.timestamp ? status.timestamp.split(' ')[0] : 'N/A'}</div>
+                    <div style={{ marginTop: '0.4rem', opacity: 0.7 }}>
+                      DATA MIN: {status.MinTimestamp || '2024-02-01 00:00:00'}<br/>
+                      DATA MAX: {status.MaxTimestamp || '2026-06-16 23:59:03'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Middle Column: Warp Controls */}
+              <div className="warp-column" style={{ justifyContent: 'center' }}>
+                <div className="warp-input-group">
+                  <span className="warp-clock-label" style={{ marginBottom: '0.2rem' }}>Temporal Coordinates</span>
+                  <input 
+                    type="datetime-local" 
+                    className="warp-datetime-input"
+                    value={warpTimeInput}
+                    onChange={(e) => setWarpTimeInput(e.target.value)}
+                    min={status.MinTimestamp ? status.MinTimestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00'}
+                    max={status.MaxTimestamp ? status.MaxTimestamp.replace(' ', 'T').slice(0, 16) : '2026-06-16T23:59'}
+                    style={{ '--glow-color': currentColor }}
+                  />
+                  <div className="warp-action-buttons">
+                    <button 
+                      className="warp-btn warp-btn-primary" 
+                      onClick={() => handleTimeTravel()}
+                      style={{ '--glow-color': currentColor }}
+                    >
+                      Warp Jump
+                    </button>
+                    <button 
+                      className="warp-btn warp-btn-secondary" 
+                      onClick={() => {
+                        if (status && status.timestamp) {
+                          setWarpTimeInput(status.timestamp.replace(' ', 'T').slice(0, 16));
+                        }
+                      }}
+                    >
+                      Set To Now
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Presets */}
+              <div className="warp-column" style={{ justifyContent: 'center' }}>
+                <span className="warp-clock-label" style={{ marginBottom: '0.2rem' }}>Event Horizon Milestones</span>
+                <div className="warp-preset-list">
+                  {warpPresets.map((preset, pIdx) => (
+                    <button 
+                      key={pIdx} 
+                      className="warp-preset-btn"
+                      onClick={() => handleTimeTravel(preset.timestamp)}
+                      style={{ '--glow-color': currentColor }}
+                    >
+                      <span className="warp-preset-name">{preset.name}</span>
+                      <span className="warp-preset-desc">{preset.timestamp.split(' ')[0]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+
           {/* SECTION 1: SYSTEM RISK MONITOR */}
           <div className="section-container">
             <div className="section-header-block">
@@ -355,6 +425,9 @@ function App() {
                         {status.HEL1OS_COUNTS ? status.HEL1OS_COUNTS.toFixed(1) : '0.0'} <span className="sensor-unit">cps</span>
                       </span>
                     </div>
+                  </div>
+                  <div className="helios-notice">
+                    ⚡ <strong>HEL1OS Sensor Telemetry Note:</strong> HEL1OS counts are calibrated at 0.0 cps from Feb 1 to June 30, 2024. Active telemetry begins on July 1, 2024. Use the Warp Navigation panel (Section 00) to jump to July 2024 or later!
                   </div>
                 </div>
 
