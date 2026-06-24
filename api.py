@@ -132,48 +132,58 @@ THRESHOLDS = {
 }
 
 def synchronize_probs(c_prob, m_prob, x_prob, pred_class, thresh_c, thresh_m, thresh_x):
-    raw_nom = max(0.0, 1.0 - max(c_prob, m_prob, x_prob))
+    # Ensure raw input probabilities are non-negative
+    c_prob = max(0.0, c_prob)
+    m_prob = max(0.0, m_prob)
+    x_prob = max(0.0, x_prob)
     
-    if pred_class == 0:
-        total = raw_nom + c_prob + m_prob + x_prob
-        if total == 0: return 1.0, 0.0, 0.0, 0.0
-        return raw_nom/total, c_prob/total, m_prob/total, x_prob/total
-        
-    if pred_class == 1:
-        target_prob = c_prob
-        thresh = thresh_c
-    elif pred_class == 2:
-        target_prob = m_prob
-        thresh = thresh_m
-    else:
-        target_prob = x_prob
-        thresh = thresh_x
-        
-    scale_range = 1.0 - thresh
-    excess = max(0.0, target_prob - thresh)
-    new_target_prob = 0.55 + 0.40 * (excess / scale_range if scale_range > 0 else 0.0)
-    new_target_prob = min(0.99, new_target_prob)
+    thresholds = {
+        0: 0.50, # nominal threshold is effectively 0.50
+        1: thresh_c,
+        2: thresh_m,
+        3: thresh_x
+    }
     
-    rem = 1.0 - new_target_prob
-    if pred_class == 1:
-        others = {'nom': raw_nom, 'm': m_prob, 'x': x_prob}
-    elif pred_class == 2:
-        others = {'nom': raw_nom, 'c': c_prob, 'x': x_prob}
-    else:
-        others = {'nom': raw_nom, 'c': c_prob, 'm': m_prob}
-        
-    sum_others = sum(others.values())
-    if sum_others > 0:
-        others = {k: rem * (v / sum_others) for k, v in others.items()}
-    else:
-        others = {k: rem / 3.0 for k in others.keys()}
-        
-    new_nom = others.get('nom', 0.0)
-    new_c = new_target_prob if pred_class == 1 else others.get('c', 0.0)
-    new_m = new_target_prob if pred_class == 2 else others.get('m', 0.0)
-    new_x = new_target_prob if pred_class == 3 else others.get('x', 0.0)
+    # Calculate the raw nominal probability
+    raw_nom = max(0.0, 1.0 - (c_prob + m_prob + x_prob))
     
-    return new_nom, new_c, new_m, new_x
+    probs = {
+        0: raw_nom,
+        1: c_prob,
+        2: m_prob,
+        3: x_prob
+    }
+    
+    other_classes = [c for c in [0, 1, 2, 3] if c != pred_class]
+    sum_raw_others = sum(probs[c] for c in other_classes)
+    
+    # We want the predicted class to have at least 0.55 probability.
+    # Therefore, the maximum combined probability for all other classes is 0.45.
+    budget = 0.45
+    other_probs = {}
+    
+    for c in other_classes:
+        # Calculate raw proportional share of the budget
+        share = budget * (probs[c] / sum_raw_others) if sum_raw_others > 0 else (budget / 3.0)
+        # Cap strictly below its threshold
+        cap = thresholds[c] - 0.005
+        # Also cap below the predicted class's minimum probability (0.50)
+        cap = min(cap, 0.50)
+        cap = max(0.0, cap)
+        
+        other_probs[c] = min(share, cap)
+        
+    # The predicted class gets all the remaining probability
+    target_prob = 1.0 - sum(other_probs.values())
+    
+    final_probs = {
+        pred_class: target_prob,
+        other_classes[0]: other_probs[other_classes[0]],
+        other_classes[1]: other_probs[other_classes[1]],
+        other_classes[2]: other_probs[other_classes[2]]
+    }
+    
+    return final_probs[0], final_probs[1], final_probs[2], final_probs[3]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # API Endpoints
