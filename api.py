@@ -30,6 +30,16 @@ app.add_middleware(
 # ─────────────────────────────────────────────────────────────────────────────
 CSV_PATH = 'predictions_output.csv.gz'
 SAMPLES_PER_SECOND = 10.0
+SIMULATION_SPEEDS = {
+    "0x": 0.0,
+    "1x": 1.0,
+    "2x": 2.0,
+    "3x": 3.0,
+    "5x": 5.0,
+    "10x": 10.0,
+    "20x": 20.0
+}
+CURRENT_SPEED_LABEL = "10x"
 
 print(f"[SolarForge] Loading telemetry from {CSV_PATH}...")
 try:
@@ -94,13 +104,29 @@ COUNTS_M_THRESH  = 5000
 COUNTS_X_THRESH  = 20000
 
 def get_event_peak_counts(df, idx):
-    """Find the peak counts of the flare event associated with index idx."""
+    """Find the peak counts of the flare event associated with index idx, or the most recent one if nominal."""
     if df.empty: return 0.0
     classes = df['PredictedClass'].values
     cls = int(classes[idx])
+    
     if cls == 0:
-        return 0.0
-        
+        # Find the most recent active event before idx
+        last_active = idx - 1
+        while last_active >= 0 and classes[last_active] == 0:
+            last_active -= 1
+        if last_active >= 0:
+            start_i = last_active
+            while start_i > 0 and classes[start_i - 1] >= 1:
+                start_i -= 1
+            end_i = last_active
+            while end_i < len(df) - 1 and classes[end_i + 1] >= 1:
+                end_i += 1
+            end_i = min(len(df) - 1, end_i + 6) # 30 mins lookahead
+            window = df.iloc[start_i : end_i + 1]
+            return float(window['SoLEXS_COUNTS'].max())
+        else:
+            return 0.0
+
     # Find start of predicted event
     start_i = idx
     while start_i > 0 and classes[start_i - 1] >= 1:
@@ -202,11 +228,12 @@ def get_status():
         row = {k: _safe(v) for k, v in _df.iloc[idx].to_dict().items()}
         row['timestamp'] = str(sim_time) # Return the exact simulation time
         row['last_refreshed'] = str(pd.Timestamp.now())
-        row['data_source'] = f"Aditya-L1 (10x Simulation Loop)"
+        row['data_source'] = f"Aditya-L1 ({CURRENT_SPEED_LABEL} Simulation Loop)"
         row['current_idx'] = idx
         row['total_rows'] = len(_df)
         row['MinTimestamp'] = str(_df.iloc[0]['timestamp']) if not _df.empty else "2024-02-01 00:00:00"
         row['MaxTimestamp'] = str(_df.iloc[-1]['timestamp']) if not _df.empty else "2026-06-16 23:59:03"
+        row['SimulationSpeed'] = CURRENT_SPEED_LABEL
         
         risk_map_main = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
         cls_model = int(row['PredictedClass'])  # what the ML model predicted
@@ -220,6 +247,9 @@ def get_status():
 
         # Magnitude matches the model class and event peak counts
         row['MagnitudeString'] = make_magnitude_val(cls_model, peak_counts_main)
+        
+        # Override raw column with event peak counts to make Peak Intensity UI work
+        row['EstimatedPeakCounts'] = peak_counts_main
 
         # Synchronize probability matrix to match the model class
         nom, c, m, x = synchronize_probs(
@@ -428,6 +458,23 @@ def get_warp_presets():
         {"name": "First HEL1OS Activity", "timestamp": "2024-07-01 00:30:00", "description": "HEL1OS sensor activates online"},
         {"name": "Peak HEL1OS Event (M4.8)", "timestamp": "2026-02-01 23:50:00", "description": "Catastrophic HEL1OS peak (116,939 cps)"}
     ]
+
+
+@app.post("/api/set_speed")
+def set_speed(speed: str):
+    global SAMPLES_PER_SECOND, REAL_START_TIME, START_INDEX, CURRENT_SPEED_LABEL
+    if speed in SIMULATION_SPEEDS:
+        # Seamless sync: freeze clock, shift start index to current index
+        current_idx = get_current_idx()
+        START_INDEX = current_idx
+        REAL_START_TIME = time.time()
+        
+        SAMPLES_PER_SECOND = SIMULATION_SPEEDS[speed]
+        CURRENT_SPEED_LABEL = speed
+        
+        print(f"[SolarForge] Simulation speed set to {speed} (Samples/sec: {SAMPLES_PER_SECOND})")
+        return {"status": "success", "speed": speed}
+    return {"status": "error", "message": "Invalid speed value"}
 
 
 @app.get("/api/health")

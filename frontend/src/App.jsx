@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,20 +13,93 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [showSoLEXS, setShowSoLEXS] = useState(true);
   const [showHEL1OS, setShowHEL1OS] = useState(true);
-  const [warpTimeInput, setWarpTimeInput] = useState('');
+  
+  // Decoupled time warp inputs
+  const [manualWarpTime, setManualWarpTime] = useState('');
+  const [manualWarpText, setManualWarpText] = useState('');
+  const [hasInitializedWarp, setHasInitializedWarp] = useState(false);
+  
+  // Audio state
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try {
+      const saved = localStorage.getItem('solarforge_sound_enabled');
+      return saved ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
+  });
+
+  const prevRiskRef = useRef('');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('solarforge_sound_enabled', JSON.stringify(soundEnabled));
+    } catch (e) {
+      console.warn("localStorage write blocked:", e);
+    }
+  }, [soundEnabled]);
+
+  const playConsoleSound = (type) => {
+    if (!soundEnabled) return;
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      if (type === 'hover') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.005, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.05);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.05);
+      } else if (type === 'click') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.025, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.08);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.08);
+      } else if (type === 'warp') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(950, audioCtx.currentTime + 0.22);
+        gain.gain.setValueAtTime(0.035, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.22);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.22);
+      }
+    } catch (e) {
+      console.warn("Audio error:", e);
+    }
+  };
+
   const [warpPresets, setWarpPresets] = useState([]);
+  const [bookmarks, setBookmarks] = useState(() => {
+    try {
+      const saved = localStorage.getItem('solarforge_bookmarks');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [bookmarkLabel, setBookmarkLabel] = useState('');
 
   const calculateDuration = () => {
     if (!status || !status.EventStart || status.EventStart === 'N/A') return 'N/A';
     try {
-      const start = new Date(status.EventStart).getTime();
+      const start = new Date(status.EventStart.replace(' ', 'T') + 'Z').getTime();
       let end;
       if (status.EventEnd === 'Ongoing') {
-        end = new Date(status.timestamp).getTime();
+        end = new Date(status.timestamp.replace(' ', 'T') + 'Z').getTime();
       } else if (status.EventEnd === 'Unknown' || status.EventEnd === 'N/A') {
         return 'N/A';
       } else {
-        end = new Date(status.EventEnd).getTime();
+        end = new Date(status.EventEnd.replace(' ', 'T') + 'Z').getTime();
       }
       
       const diffMs = end - start;
@@ -56,20 +129,21 @@ function App() {
       const statusData = statusRes.data;
       setStatus(statusData);
       
-      // Initialize date input once when empty
-      if (statusData && statusData.timestamp && !warpTimeInput) {
-        setWarpTimeInput(statusData.timestamp.replace(' ', 'T').slice(0, 16));
+      // Initialize date inputs once when first loaded
+      if (statusData && statusData.timestamp && !hasInitializedWarp) {
+        setManualWarpTime(statusData.timestamp.replace(' ', 'T').slice(0, 16));
+        setManualWarpText(statusData.timestamp);
+        setHasInitializedWarp(true);
       }
       
-      // Ensure we don't crash if the backend returns an error object instead of an array
       const safeRecentFlares = Array.isArray(recentRes.data) ? recentRes.data : [];
       setRecentFlares(safeRecentFlares);
       
       const safeHistory = Array.isArray(historyRes.data) ? historyRes.data : [];
       
-      // Ensure proper date objects for charts and formatted properly in IST
+      // Format history with standard UTC parser mapping to user's view in IST
       const formattedHistory = safeHistory.map(item => {
-        const date = new Date(item.timestamp);
+        const date = new Date(item.timestamp.replace(' ', 'T') + 'Z');
         return {
           time: date.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute:'2-digit'}),
           fullDate: date.toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST',
@@ -86,7 +160,7 @@ function App() {
   };
 
   const handleTimeTravel = async (targetTime) => {
-    const timeToWarp = targetTime || warpTimeInput;
+    const timeToWarp = targetTime || manualWarpTime;
     if (!timeToWarp) return;
     try {
       setLoading(true);
@@ -96,16 +170,78 @@ function App() {
       
       await axios.post(`${API_URL}/set_time?timestamp=${encodeURIComponent(queryTime)}`);
       
-      // If a preset was clicked, sync the input box to it
-      if (targetTime) {
-        setWarpTimeInput(targetTime.replace(' ', 'T').slice(0, 16));
-      }
+      const cleanWarpTime = queryTime.replace(' ', 'T').slice(0, 16);
+      setManualWarpTime(cleanWarpTime);
+      setManualWarpText(queryTime);
       
       await fetchData();
     } catch (error) {
       console.error("Error warping time:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSetSpeed = async (speedVal) => {
+    try {
+      setLoading(true);
+      await axios.post(`${API_URL}/set_speed?speed=${speedVal}`);
+      await fetchData();
+    } catch (err) {
+      console.error("Error setting speed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addBookmark = () => {
+    if (!status || !status.timestamp) return;
+    playConsoleSound('click');
+    const label = bookmarkLabel.trim() || `Bookmark at ${status.timestamp.split(' ')[1]}`;
+    const newB = [...bookmarks, { name: label, timestamp: status.timestamp }];
+    setBookmarks(newB);
+    localStorage.setItem('solarforge_bookmarks', JSON.stringify(newB));
+    setBookmarkLabel('');
+  };
+
+  const removeBookmark = (idxToRemove) => {
+    playConsoleSound('click');
+    const newB = bookmarks.filter((_, idx) => idx !== idxToRemove);
+    setBookmarks(newB);
+    localStorage.setItem('solarforge_bookmarks', JSON.stringify(newB));
+  };
+
+  const playAlarmSound = () => {
+    if (!soundEnabled) return;
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc1 = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc1.type = 'sawtooth';
+      osc2.type = 'sine';
+      
+      osc1.frequency.setValueAtTime(880, audioCtx.currentTime);
+      osc1.frequency.linearRampToValueAtTime(440, audioCtx.currentTime + 0.45);
+      
+      osc2.frequency.setValueAtTime(440, audioCtx.currentTime);
+      osc2.frequency.linearRampToValueAtTime(220, audioCtx.currentTime + 0.45);
+      
+      gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+      
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      osc1.start();
+      osc2.start();
+      
+      osc1.stop(audioCtx.currentTime + 0.5);
+      osc2.stop(audioCtx.currentTime + 0.5);
+    } catch (e) {
+      console.warn("AudioContext block:", e);
     }
   };
 
@@ -134,6 +270,46 @@ function App() {
     fetchLoop();
     return () => { isMounted = false; };
   }, []);
+
+  useEffect(() => {
+    if (status && status.RiskLabel === 'X-CLASS') {
+      playAlarmSound();
+      const alarmInterval = setInterval(playAlarmSound, 5000);
+      return () => clearInterval(alarmInterval);
+    }
+  }, [status ? status.RiskLabel : null, soundEnabled]);
+
+  // Voice Announcer TTS Alert effect
+  useEffect(() => {
+    if (!status || !status.RiskLabel) return;
+    const prevRisk = prevRiskRef.current;
+    if (status.RiskLabel !== prevRisk) {
+      prevRiskRef.current = status.RiskLabel;
+      // Do not speak on initial render load to avoid disruptive greetings
+      if (soundEnabled && prevRisk) {
+        let message = "";
+        if (status.RiskLabel === 'X-CLASS') {
+          message = "Warning! Catastrophic X-class solar flare initiation detected. Grid and satellite threats active.";
+        } else if (status.RiskLabel === 'M-CLASS') {
+          message = "Alert. High risk M-class solar flare detected. Degraded radio communications likely.";
+        } else if (status.RiskLabel === 'C-CLASS') {
+          message = "Moderate risk C-class solar flare activity detected.";
+        } else if (status.RiskLabel === 'NOMINAL' && prevRisk !== 'NOMINAL') {
+          message = "Solar telemetry returned to nominal state.";
+        }
+        if (message) {
+          try {
+            const utterance = new SpeechSynthesisUtterance(message);
+            utterance.volume = 0.85;
+            utterance.rate = 1.0;
+            window.speechSynthesis.speak(utterance);
+          } catch (e) {
+            console.warn("Speech synthesis blocked:", e);
+          }
+        }
+      }
+    }
+  }, [status ? status.RiskLabel : null, soundEnabled]);
 
   if (loading || !status || status.error) {
     return (
@@ -236,7 +412,7 @@ function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
             <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
               <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}, 0 0 24px ${currentColor}` }}></div>
-              SIMULATION ACTIVE (10x) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
+              SIMULATION ACTIVE ({status.SimulationSpeed}) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
             </div>
           </div>
         </motion.header>
@@ -251,14 +427,84 @@ function App() {
             </div>
             
             <motion.div className="glass-panel temporal-warp-card" style={{ '--glow-color': currentColor }} variants={itemVars}>
-              {/* Left Column: Clock Display */}
+              {/* Left Column: Clock Display & Playback Speed */}
               <div className="warp-column">
                 <div className="warp-clock-display">
                   <span className="warp-clock-label">Simulated Time Clock</span>
                   <div className="warp-clock-time">{status.timestamp ? status.timestamp.split(' ')[1] : '00:00:00'}</div>
-                  <div className="warp-clock-bounds font-mono">
+                  
+                  {/* Play/Pause & Speed Deck */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '100%', marginTop: '0.4rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.6rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                      <button 
+                        onClick={() => {
+                          playConsoleSound('click');
+                          handleSetSpeed(status.SimulationSpeed === '0x' ? '10x' : '0x');
+                        }}
+                        onMouseEnter={() => playConsoleSound('hover')}
+                        className="warp-btn"
+                        style={{
+                          background: status.SimulationSpeed === '0x' ? 'rgba(255,255,255,0.04)' : currentColor,
+                          color: status.SimulationSpeed === '0x' ? '#fff' : '#000',
+                          border: status.SimulationSpeed === '0x' ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                          boxShadow: status.SimulationSpeed === '0x' ? 'none' : `0 0 10px ${currentColor}`,
+                          padding: '0.35rem 0.65rem',
+                          fontSize: '0.72rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          borderRadius: '6px'
+                        }}
+                      >
+                        {status.SimulationSpeed === '0x' ? (
+                          <>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            PLAY
+                          </>
+                        ) : (
+                          <>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                            PAUSE
+                          </>
+                        )}
+                      </button>
+                      
+                      <span className="warp-clock-label" style={{ fontSize: '0.62rem' }}>SPEED: {status.SimulationSpeed}</span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                      {['1x', '2x', '3x', '5x', '10x', '20x'].map(spd => (
+                        <button
+                          key={spd}
+                          onClick={() => {
+                            playConsoleSound('click');
+                            handleSetSpeed(spd);
+                          }}
+                          onMouseEnter={() => playConsoleSound('hover')}
+                          style={{
+                            background: status.SimulationSpeed === spd ? currentColor : 'rgba(255,255,255,0.02)',
+                            color: status.SimulationSpeed === spd ? '#000' : '#fff',
+                            border: status.SimulationSpeed === spd ? `1px solid ${currentColor}` : '1px solid rgba(255,255,255,0.06)',
+                            padding: '0.15rem 0.35rem',
+                            fontSize: '0.6rem',
+                            fontFamily: 'var(--font-mono)',
+                            cursor: 'pointer',
+                            borderRadius: '4px',
+                            fontWeight: 'bold',
+                            boxShadow: status.SimulationSpeed === spd ? `0 0 6px ${currentColor}aa` : 'none',
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          {spd}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="warp-clock-bounds font-mono" style={{ marginTop: '0.6rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.6rem', width: '100%' }}>
                     <div style={{ color: currentColor, fontWeight: 'bold' }}>DATE: {status.timestamp ? status.timestamp.split(' ')[0] : 'N/A'}</div>
-                    <div style={{ marginTop: '0.4rem', opacity: 0.7 }}>
+                    <div style={{ marginTop: '0.2rem', opacity: 0.6, fontSize: '0.62rem' }}>
                       DATA MIN: {status.MinTimestamp || '2024-02-01 00:00:00'}<br/>
                       DATA MAX: {status.MaxTimestamp || '2026-06-16 23:59:03'}
                     </div>
@@ -268,60 +514,222 @@ function App() {
 
               {/* Middle Column: Warp Controls */}
               <div className="warp-column" style={{ justifyContent: 'center' }}>
-                <div className="warp-input-group">
-                  <span className="warp-clock-label" style={{ marginBottom: '0.2rem' }}>Temporal Coordinates</span>
-                  <input 
-                    type="datetime-local" 
-                    className="warp-datetime-input"
-                    value={warpTimeInput}
-                    onChange={(e) => setWarpTimeInput(e.target.value)}
-                    min={status.MinTimestamp ? status.MinTimestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00'}
-                    max={status.MaxTimestamp ? status.MaxTimestamp.replace(' ', 'T').slice(0, 16) : '2026-06-16T23:59'}
-                    style={{ '--glow-color': currentColor }}
-                  />
-                  <div className="warp-action-buttons">
+                <div className="warp-input-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '100%' }}>
+                  <span className="warp-clock-label" style={{ marginBottom: '0.1rem' }}>Manual Warp Coordinates</span>
+                  
+                  {/* Free-form Text Input */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                    <span className="font-mono" style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>COORDINATE ENTRY (TEXT)</span>
+                    <input 
+                      type="text" 
+                      className="warp-text-input"
+                      placeholder="YYYY-MM-DD HH:MM:SS"
+                      value={manualWarpText}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setManualWarpText(val);
+                        // Attempt to sync calendar input if the input matches YYYY-MM-DD HH:MM
+                        if (val.length >= 16) {
+                          const datePart = val.slice(0, 10);
+                          const timePart = val.slice(11, 16);
+                          if (datePart.match(/^\d{4}-\d{2}-\d{2}$/) && timePart.match(/^\d{2}:\d{2}$/)) {
+                            setManualWarpTime(`${datePart}T${timePart}`);
+                          }
+                        }
+                      }}
+                      onMouseEnter={() => playConsoleSound('hover')}
+                      style={{
+                        background: 'rgba(5, 5, 8, 0.45)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '6px',
+                        color: '#fff',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.72rem',
+                        padding: '0.45rem 0.65rem',
+                        width: '100%',
+                        outline: 'none',
+                        transition: 'border-color 0.2s ease',
+                        borderColor: currentColor + 'aa'
+                      }}
+                    />
+                  </div>
+
+                  {/* Calendar Date-Time Local Input */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                    <span className="font-mono" style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>COORDINATE SELECTOR (CALENDAR)</span>
+                    <input 
+                      type="datetime-local" 
+                      className="warp-datetime-input"
+                      value={manualWarpTime}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setManualWarpTime(val);
+                        if (val) {
+                          setManualWarpText(val.replace('T', ' ') + ':00');
+                        }
+                      }}
+                      onMouseEnter={() => playConsoleSound('hover')}
+                      min={status.MinTimestamp ? status.MinTimestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00'}
+                      max={status.MaxTimestamp ? status.MaxTimestamp.replace(' ', 'T').slice(0, 16) : '2026-06-16T23:59'}
+                      style={{ '--glow-color': currentColor }}
+                    />
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="warp-action-buttons" style={{ display: 'flex', gap: '0.4rem', marginTop: '0.2rem' }}>
                     <button 
                       className="warp-btn warp-btn-primary" 
-                      onClick={() => handleTimeTravel()}
-                      style={{ '--glow-color': currentColor }}
+                      onClick={() => {
+                        playConsoleSound('warp');
+                        handleTimeTravel(manualWarpText);
+                      }}
+                      style={{ '--glow-color': currentColor, flexGrow: 1 }}
                     >
                       Warp Jump
                     </button>
                     <button 
                       className="warp-btn warp-btn-secondary" 
                       onClick={() => {
+                        playConsoleSound('click');
                         if (status && status.timestamp) {
-                          setWarpTimeInput(status.timestamp.replace(' ', 'T').slice(0, 16));
+                          setManualWarpTime(status.timestamp.replace(' ', 'T').slice(0, 16));
+                          setManualWarpText(status.timestamp);
                         }
                       }}
+                      style={{ flexGrow: 1 }}
                     >
-                      Set To Now
+                      Sync with Clock
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* Right Column: Presets */}
-              <div className="warp-column" style={{ justifyContent: 'center' }}>
-                <span className="warp-clock-label" style={{ marginBottom: '0.2rem' }}>Event Horizon Milestones</span>
-                <div className="warp-preset-list">
-                  {warpPresets.map((preset, pIdx) => (
+              {/* Right Column: Presets & Bookmarks */}
+              <div className="warp-column" style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: '280px', overflowY: 'auto', paddingRight: '0.5rem' }}>
+                <div>
+                  <span className="warp-clock-label" style={{ marginBottom: '0.3rem', display: 'block' }}>Milestone Presets</span>
+                  <div className="warp-preset-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.4rem' }}>
+                    {warpPresets.map((preset, pIdx) => (
+                      <button 
+                        key={pIdx} 
+                        className="warp-preset-btn"
+                        onClick={() => {
+                          playConsoleSound('warp');
+                          handleTimeTravel(preset.timestamp);
+                        }}
+                        onMouseEnter={() => playConsoleSound('hover')}
+                        style={{ '--glow-color': currentColor, padding: '0.4rem 0.6rem' }}
+                      >
+                        <span className="warp-preset-name" style={{ fontSize: '0.68rem' }}>{preset.name}</span>
+                        <span className="warp-preset-desc" style={{ fontSize: '0.58rem' }}>{preset.timestamp.split(' ')[0]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.6rem' }}>
+                  <span className="warp-clock-label" style={{ marginBottom: '0.3rem', display: 'block' }}>Saved Bookmarks</span>
+                  
+                  {/* Add Bookmark form */}
+                  <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.5rem' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Bookmark name..."
+                      value={bookmarkLabel}
+                      onChange={(e) => setBookmarkLabel(e.target.value)}
+                      onMouseEnter={() => playConsoleSound('hover')}
+                      style={{
+                        background: 'rgba(5, 5, 8, 0.4)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '4px',
+                        color: '#fff',
+                        fontSize: '0.7rem',
+                        fontFamily: 'var(--font-main)',
+                        padding: '0.3rem 0.5rem',
+                        flexGrow: 1,
+                        outline: 'none'
+                      }}
+                    />
                     <button 
-                      key={pIdx} 
-                      className="warp-preset-btn"
-                      onClick={() => handleTimeTravel(preset.timestamp)}
-                      style={{ '--glow-color': currentColor }}
+                      onClick={addBookmark}
+                      style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        color: '#fff',
+                        borderRadius: '4px',
+                        fontSize: '0.7rem',
+                        padding: '0.3rem 0.6rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseEnter={(e) => {
+                        playConsoleSound('hover');
+                        e.target.style.background = 'rgba(255,255,255,0.12)';
+                      }}
+                      onMouseLeave={(e) => e.target.style.background = 'rgba(255,255,255,0.06)'}
                     >
-                      <span className="warp-preset-name">{preset.name}</span>
-                      <span className="warp-preset-desc">{preset.timestamp.split(' ')[0]}</span>
+                      Save
                     </button>
-                  ))}
+                  </div>
+
+                  {/* Bookmarks List */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', maxHeight: '110px', overflowY: 'auto' }}>
+                    {bookmarks.length > 0 ? (
+                      bookmarks.map((bm, bmIdx) => (
+                        <div 
+                          key={bmIdx}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            background: 'rgba(255,255,255,0.01)',
+                            border: '1px solid rgba(255,255,255,0.03)',
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: '6px',
+                            gap: '0.5rem'
+                          }}
+                        >
+                          <div 
+                            onClick={() => {
+                              playConsoleSound('warp');
+                              handleTimeTravel(bm.timestamp);
+                            }}
+                            onMouseEnter={() => playConsoleSound('hover')}
+                            style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, cursor: 'pointer', textAlign: 'left' }}
+                          >
+                            <span style={{ fontSize: '0.7rem', color: '#fff', fontWeight: '500' }}>{bm.name}</span>
+                            <span style={{ fontSize: '0.58rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{bm.timestamp}</span>
+                          </div>
+                          <button
+                            onClick={() => removeBookmark(bmIdx)}
+                            onMouseEnter={() => playConsoleSound('hover')}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--neon-red)',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              padding: '0.1rem 0.3rem',
+                              opacity: 0.6,
+                              transition: 'opacity 0.2s ease'
+                            }}
+                            onMouseLeave={(e) => e.target.style.opacity = 0.6}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>No saved coordinates yet.</span>
+                    )}
+                  </div>
                 </div>
               </div>
             </motion.div>
           </div>
 
-          {/* SECTION 1: SYSTEM RISK MONITOR */}
+          {/* SECTION 1: SYSTEM RISK MONITOR & SUN VISUALIZER */}
           <div className="section-container">
             <div className="section-header-block">
               <span className="section-number">01 //</span>
@@ -330,33 +738,135 @@ function App() {
             </div>
             
             <motion.div className={`glass-panel status-card ${themeClass}`} style={{ '--glow-color': currentColor }} variants={itemVars}>
-              <div className="status-label">CURRENT RISK LEVEL</div>
-              <motion.div 
-                key={status.RiskLabel}
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: "spring", bounce: 0.5 }}
-                className="status-level" 
-                style={{ color: currentColor }}
-              >
-                {status.RiskLabel}
-              </motion.div>
-              
-              {status.RiskLabel !== 'NOMINAL' && (
-                 <motion.div 
-                   initial={{ opacity: 0, y: 10 }}
-                   animate={{ opacity: 1, y: 0 }}
-                   className="magnitude-level"
-                 >
-                   {status.MagnitudeString}
-                 </motion.div>
-              )}
-              
-              <div className="risk-assessment" style={{ color: currentColor }}>
-                {status.RiskLabel === 'X-CLASS' ? 'CATASTROPHIC — GRID/SATELLITE THREAT!' :
-                 status.RiskLabel === 'M-CLASS' ? 'HIGH RISK — DEGRADED COMMS/GPS LIKELY' :
-                 status.RiskLabel === 'C-CLASS' ? 'MODERATE RISK — MINOR DISRUPTIONS' :
-                 'NO SIGNIFICANT RISK DETECTED'}
+              <div className="status-card-grid">
+                {/* Left Column: Risk details */}
+                <div className="status-info-col">
+                  <div className="status-label">CURRENT RISK LEVEL</div>
+                  <motion.div 
+                    key={status.RiskLabel}
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", bounce: 0.5 }}
+                    className="status-level" 
+                    style={{ color: currentColor }}
+                  >
+                    {status.RiskLabel}
+                  </motion.div>
+                  
+                  {status.RiskLabel !== 'NOMINAL' && (
+                     <motion.div 
+                       initial={{ opacity: 0, y: 10 }}
+                       animate={{ opacity: 1, y: 0 }}
+                       className="magnitude-level"
+                     >
+                       {status.MagnitudeString}
+                     </motion.div>
+                  )}
+                  
+                  <div className="risk-assessment" style={{ color: currentColor }}>
+                    {status.RiskLabel === 'X-CLASS' ? 'CATASTROPHIC — GRID/SATELLITE THREAT!' :
+                     status.RiskLabel === 'M-CLASS' ? 'HIGH RISK — DEGRADED COMMS/GPS LIKELY' :
+                     status.RiskLabel === 'C-CLASS' ? 'MODERATE RISK — MINOR DISRUPTIONS' :
+                     'NO SIGNIFICANT RISK DETECTED'}
+                  </div>
+
+                  {/* Audio Controls Toggle */}
+                  <div className="audio-control-hud">
+                    <button 
+                      onClick={() => {
+                        const nextVal = !soundEnabled;
+                        setSoundEnabled(nextVal);
+                        if (nextVal) {
+                          // Play test sound to confirm Web Audio initialized
+                          setTimeout(() => {
+                            try {
+                              const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                              const osc = audioCtx.createOscillator();
+                              const gain = audioCtx.createGain();
+                              osc.connect(gain);
+                              gain.connect(audioCtx.destination);
+                              osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+                              gain.gain.setValueAtTime(0.015, audioCtx.currentTime);
+                              gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
+                              osc.start();
+                              osc.stop(audioCtx.currentTime + 0.1);
+                            } catch (e) {}
+                          }, 50);
+                        }
+                      }} 
+                      className={`hud-audio-btn ${soundEnabled ? 'active' : ''}`}
+                      onMouseEnter={() => playConsoleSound('hover')}
+                      style={{ '--btn-color': currentColor }}
+                    >
+                      <span className="audio-icon" style={{ display: 'flex', alignItems: 'center' }}>
+                        {soundEnabled ? (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                          </svg>
+                        ) : (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <line x1="23" y1="9" x2="17" y2="15"></line>
+                            <line x1="17" y1="9" x2="23" y2="15"></line>
+                          </svg>
+                        )}
+                      </span>
+                      <span>AUDIO SYSTEM: {soundEnabled ? 'ONLINE' : 'MUTED'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right Column: Animated Sun Visualizer */}
+                <div className="status-sun-col">
+                  <div className="sun-visualizer-container">
+                    <svg className={`sun-svg ${status.RiskLabel}`} viewBox="0 0 100 100">
+                      <defs>
+                        <radialGradient id="sunGradient" cx="50%" cy="50%" r="50%">
+                          <stop offset="0%" stopColor="#fff" />
+                          <stop offset="60%" stopColor={currentColor} />
+                          <stop offset="100%" stopColor="transparent" />
+                        </radialGradient>
+                        <radialGradient id="coronaGradient" cx="50%" cy="50%" r="50%">
+                          <stop offset="70%" stopColor={currentColor} stopOpacity="0.45" />
+                          <stop offset="100%" stopColor={currentColor} stopOpacity="0" />
+                        </radialGradient>
+                        <filter id="sunGlow" x="-50%" y="-50%" width="200%" height="200%">
+                          <feGaussianBlur stdDeviation="5" result="blur" />
+                          <feMerge>
+                            <feMergeNode in="blur" />
+                            <feMergeNode in="SourceGraphic" />
+                          </feMerge>
+                        </filter>
+                      </defs>
+
+                      {/* Corona Ring */}
+                      <circle cx="50%" cy="50%" r="35" className="sun-corona" fill="url(#coronaGradient)" filter="url(#sunGlow)" />
+                      
+                      {/* Sun Core */}
+                      <circle cx="50%" cy="50%" r="22" className="sun-core" fill="url(#sunGradient)" filter="url(#sunGlow)" />
+
+                      {/* Flare Arcs / Magnetic Loops */}
+                      {status.RiskLabel !== 'NOMINAL' && (
+                        <>
+                          <path d="M 35 50 A 15 15 0 0 1 65 50" className="magnetic-loop loop-1" stroke={currentColor} strokeWidth="1.5" fill="none" />
+                          <path d="M 50 35 A 15 15 0 0 1 50 65" className="magnetic-loop loop-2" stroke={currentColor} strokeWidth="1.2" fill="none" />
+                        </>
+                      )}
+                      
+                      {/* X-Class Corona Eruptions */}
+                      {status.RiskLabel === 'X-CLASS' && (
+                        <>
+                          <line x1="50" y1="50" x2="20" y2="20" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-1" />
+                          <line x1="50" y1="50" x2="80" y2="80" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-2" />
+                          <line x1="50" y1="50" x2="80" y2="20" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-3" />
+                          <line x1="50" y1="50" x2="20" y2="80" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-4" />
+                        </>
+                      )}
+                    </svg>
+                    <div className="sun-scan-line"></div>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -407,7 +917,7 @@ function App() {
                     <div className="metric-info">
                       <span className="metric-label">Peak Intensity</span>
                       <span className="metric-value font-mono">
-                        {status.EstimatedPeakCounts ? status.EstimatedPeakCounts.toFixed(1) : 'N/A'} <span className="metric-unit">cps</span>
+                        {status.EstimatedPeakCounts !== undefined && status.EstimatedPeakCounts !== null ? status.EstimatedPeakCounts.toFixed(1) : 'N/A'} <span className="metric-unit">cps</span>
                       </span>
                     </div>
                   </div>
@@ -426,8 +936,30 @@ function App() {
                       </span>
                     </div>
                   </div>
-                  <div className="helios-notice">
+                  
+                  <div className="helios-notice" style={{ marginBottom: '0.8rem' }}>
                     ⚡ <strong>HEL1OS Sensor Telemetry Note:</strong> HEL1OS counts are calibrated at 0.0 cps from Feb 1 to June 30, 2024. Active telemetry begins on July 1, 2024. Use the Warp Navigation panel (Section 00) to jump to July 2024 or later!
+                  </div>
+
+                  {/* Aditya-L1 Spacecraft Telemetry HUD */}
+                  <div className="spacecraft-telemetry-panel" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.8rem' }}>
+                    <div className="spacecraft-title font-mono" style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 'bold', marginBottom: '0.5rem', letterSpacing: '1px' }}>
+                      ADITYA-L1 CORE VEHICLE HEALTH
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem' }}>
+                      <div className="spacecraft-stat">
+                        <span className="sc-stat-label">L1 DISTANCE</span>
+                        <span className="sc-stat-value font-mono">{(1498200 + (status.current_idx % 200) * 5 - 500).toLocaleString()} km</span>
+                      </div>
+                      <div className="spacecraft-stat">
+                        <span className="sc-stat-label">SOLAR WIND</span>
+                        <span className="sc-stat-value font-mono">{(380 + (status.SoLEXS_COUNTS / 50) + Math.sin(status.current_idx / 10) * 15).toFixed(1)} km/s</span>
+                      </div>
+                      <div className="spacecraft-stat">
+                        <span className="sc-stat-label">MAG. FIELD (B)</span>
+                        <span className="sc-stat-value font-mono">{(6.2 + (status.SoLEXS_COUNTS / 200) + Math.cos(status.current_idx / 8) * 1.5).toFixed(1)} nT</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -513,7 +1045,11 @@ function App() {
                 <div className="sensor-toggles" style={{ display: 'flex', gap: '1rem' }}>
                   <button 
                     className={`sensor-toggle-btn solexs-btn ${showSoLEXS ? 'active' : ''}`}
-                    onClick={() => setShowSoLEXS(!showSoLEXS)}
+                    onClick={() => {
+                      playConsoleSound('click');
+                      setShowSoLEXS(!showSoLEXS);
+                    }}
+                    onMouseEnter={() => playConsoleSound('hover')}
                     style={{
                       background: showSoLEXS ? 'rgba(0, 210, 255, 0.15)' : 'rgba(255,255,255,0.02)',
                       border: showSoLEXS ? '1px solid #00d2ff' : '1px solid rgba(255,255,255,0.08)',
@@ -532,7 +1068,11 @@ function App() {
                   </button>
                   <button 
                     className={`sensor-toggle-btn hel1os-btn ${showHEL1OS ? 'active' : ''}`}
-                    onClick={() => setShowHEL1OS(!showHEL1OS)}
+                    onClick={() => {
+                      playConsoleSound('click');
+                      setShowHEL1OS(!showHEL1OS);
+                    }}
+                    onMouseEnter={() => playConsoleSound('hover')}
                     style={{
                       background: showHEL1OS ? 'rgba(255, 42, 42, 0.15)' : 'rgba(255,255,255,0.02)',
                       border: showHEL1OS ? '1px solid #ff2a2a' : '1px solid rgba(255,255,255,0.08)',
@@ -637,7 +1177,7 @@ function App() {
                   const cardColor = classColors[f.RiskLabel] || classColors['NOMINAL'];
                   const cardTheme = getThemeClass(f.RiskLabel);
                   
-                  const targetTime = new Date(new Date(status.timestamp).getTime() + h.offsetMin * 60 * 1000);
+                  const targetTime = new Date(new Date(status.timestamp.replace(' ', 'T') + 'Z').getTime() + h.offsetMin * 60 * 1000);
                   const targetTimeString = targetTime.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit'});
                   
                   return (
@@ -725,10 +1265,10 @@ function App() {
                   <tbody>
                     {recentFlares.map((flare, idx) => {
                       const isOngoing = flare.end === 'Ongoing';
-                      const formattedEnd = isOngoing ? 'Ongoing' : new Date(flare.end).toLocaleString('en-US', {timeZone: 'Asia/Kolkata'});
+                      const formattedEnd = isOngoing ? 'Ongoing' : new Date(flare.end.replace(' ', 'T') + 'Z').toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST';
                       return (
                         <tr key={idx}>
-                          <td>{new Date(flare.start).toLocaleString('en-US', {timeZone: 'Asia/Kolkata'})}</td>
+                          <td>{new Date(flare.start.replace(' ', 'T') + 'Z').toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST'}</td>
                           <td style={{ color: isOngoing ? 'var(--neon-red)' : 'var(--text-muted)', fontWeight: isOngoing ? 'bold' : 'normal' }}>
                             {isOngoing ? (
                               <span className="blink-fast" style={{ textShadow: '0 0 5px var(--neon-red)' }}>ONGOING</span>
@@ -764,7 +1304,7 @@ function App() {
             <motion.div className="probs-panel" variants={itemVars}>
               <motion.div whileHover={{ scale: 1.03 }} className="glass-panel prob-card" style={{ '--glow-color': 'var(--neon-green)' }}>
                 <div className="prob-title">Nominal</div>
-                <div className="prob-value">{((1 - (status.CProb + status.MProb + status.XProb)) * 100).toFixed(2)}%</div>
+                <div className="prob-value">{(status.SafeProb * 100).toFixed(2)}%</div>
               </motion.div>
               <motion.div whileHover={{ scale: 1.03 }} className="glass-panel prob-card" style={{ '--glow-color': '#ffea00' }}>
                 <div className="prob-title">C-Class</div>

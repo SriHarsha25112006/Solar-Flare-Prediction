@@ -1148,3 +1148,274 @@ body {
   line-height: 1.3;
 }
 
+/* Futuristic Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--glow-color, var(--neon-red));
+}
+
+/* ==========================================================================
+   Sun Visualizer & Spacecraft Telemetry & Audio Toggle
+   ========================================================================== */
+.status-card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: 100%;
+  align-items: center;
+  gap: 2rem;
+}
+
+@media (min-width: 768px) {
+  .status-card-grid {
+    grid-template-columns: 1.2fr 0.8fr;
+  }
+}
+
+.status-info-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+@media (min-width: 768px) {
+  .status-info-col {
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
+.status-sun-col {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+}
+
+/* Sun Visualizer Widget */
+.sun-visualizer-container {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.8), 0 0 15px rgba(255, 255, 255, 0.02);
+}
+
+.sun-visualizer-container::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(255, 255, 255, 0.12);
+  animation: rotate-dashed-ring 30s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes rotate-dashed-ring {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.sun-svg {
+  width: 90%;
+  height: 90%;
+  transform-origin: center;
+}
+
+.sun-corona {
+  transform-origin: center;
+  animation: pulse-corona 3s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-corona {
+  0% { transform: scale(0.95); opacity: 0.65; }
+  100% { transform: scale(1.1); opacity: 0.95; }
+}
+
+.sun-core {
+  transform-origin: center;
+  animation: pulse-sun-core 2s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-sun-core {
+  0% { transform: scale(0.97); }
+  100% { transform: scale(1.03); }
+}
+
+/* State Specific Animations */
+.sun-svg.NOMINAL .sun-core {
+  animation: pulse-sun-core 4s ease-in-out infinite alternate;
+}
+
+.sun-svg.C-CLASS .sun-core {
+  animation: pulse-sun-core 2.2s ease-in-out infinite alternate;
+}
+
+.sun-svg.M-CLASS .sun-core {
+  animation: pulse-sun-core 1.4s ease-in-out infinite alternate;
+}
+
+.sun-svg.X-CLASS .sun-core {
+  animation: pulse-sun-core 0.5s ease-in-out infinite alternate, shake-sun 0.12s infinite;
+}
+
+@keyframes shake-sun {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-0.6px, 0.6px); }
+  50% { transform: translate(0.6px, -0.6px); }
+  75% { transform: translate(-0.6px, -0.6px); }
+  100% { transform: translate(0.6px, 0.6px); }
+}
+
+/* Magnetic loops animation */
+.magnetic-loop {
+  stroke-dasharray: 4 4;
+  animation: loop-crawl 1.8s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes loop-crawl {
+  to { stroke-dashoffset: -8; }
+}
+
+.loop-1 {
+  animation-duration: 2.2s;
+}
+
+.loop-2 {
+  animation-duration: 1.4s;
+  transform: rotate(45deg);
+}
+
+/* Coronal Eruptions (rays) during X-class */
+.eruption {
+  stroke-linecap: round;
+  stroke-dasharray: 20 20;
+  animation: erupt-beam 1.2s linear infinite;
+}
+
+@keyframes erupt-beam {
+  0% { stroke-dashoffset: 40; opacity: 0.4; }
+  50% { opacity: 0.9; }
+  100% { stroke-dashoffset: 0; opacity: 0.4; }
+}
+
+.ray-1 { transform: rotate(15deg); }
+.ray-2 { transform: rotate(105deg); }
+.ray-3 { transform: rotate(195deg); }
+.ray-4 { transform: rotate(285deg); }
+
+/* Sun scan line */
+.sun-scan-line {
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.04);
+  animation: sun-scan-anim 5s linear infinite;
+}
+
+@keyframes sun-scan-anim {
+  0% { top: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+/* Audio control console */
+.audio-control-hud {
+  margin-top: 1.2rem;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+@media (min-width: 768px) {
+  .audio-control-hud {
+    justify-content: flex-start;
+  }
+}
+
+.hud-audio-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  padding: 0.45rem 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.hud-audio-btn.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--btn-color);
+  box-shadow: 0 0 8px var(--btn-color);
+  text-shadow: 0 0 5px rgba(255,255,255,0.4);
+}
+
+.hud-audio-btn:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.2);
+}
+
+/* Spacecraft Telemetry HUD */
+.spacecraft-telemetry-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.spacecraft-stat {
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+}
+
+.spacecraft-stat:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.sc-stat-label {
+  font-size: 0.52rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.sc-stat-value {
+  font-size: 0.75rem;
+  color: #fff;
+  font-weight: 700;
+  margin-top: 0.15rem;
+}
+
+
