@@ -53,10 +53,15 @@ function App() {
       ]);
       
       setStatus(statusRes.data);
-      setRecentFlares(recentRes.data);
+      
+      // Ensure we don't crash if the backend returns an error object instead of an array
+      const safeRecentFlares = Array.isArray(recentRes.data) ? recentRes.data : [];
+      setRecentFlares(safeRecentFlares);
+      
+      const safeHistory = Array.isArray(historyRes.data) ? historyRes.data : [];
       
       // Ensure proper date objects for charts and formatted properly in IST
-      const formattedHistory = historyRes.data.map(item => {
+      const formattedHistory = safeHistory.map(item => {
         const date = new Date(item.timestamp);
         return {
           time: date.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute:'2-digit'}),
@@ -99,11 +104,11 @@ function App() {
     return () => { isMounted = false; };
   }, []);
 
-  if (loading || !status) {
+  if (loading || !status || status.error) {
     return (
       <div className="loading">
         <div className="spinner"></div>
-        <h2>INITIALIZING SOLARFORGE V2...</h2>
+        <h2>{status && status.error ? "ERROR: " + status.error : "INITIALIZING SOLARFORGE V2..."}</h2>
       </div>
     );
   }
@@ -208,7 +213,7 @@ function App() {
               <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.5px' }}>WARP:</span>
               <input 
                 type="datetime-local" 
-                value={warpTime || (status ? status.timestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00')}
+                value={warpTime || (status && status.timestamp ? status.timestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00')}
                 onChange={(e) => setWarpTime(e.target.value)}
                 min="2024-02-01T00:00"
                 max="2024-02-07T23:55"
