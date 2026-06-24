@@ -3,7 +3,9 @@ uvicorn
 pandas
 aiofiles
 lightgbm
+xgboost
 scikit-learn
 scipy
 pyarrow
 numpy
+joblib

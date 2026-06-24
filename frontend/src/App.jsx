@@ -11,16 +11,8 @@ function App() {
   const [history, setHistory] = useState([]);
   const [recentFlares, setRecentFlares] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [showSoLEXS, setShowSoLEXS] = useState(true);
   const [showHEL1OS, setShowHEL1OS] = useState(true);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const calculateDuration = () => {
     if (!status || !status.EventStart || status.EventStart === 'N/A') return 'N/A';
@@ -28,7 +20,7 @@ function App() {
       const start = new Date(status.EventStart).getTime();
       let end;
       if (status.EventEnd === 'Ongoing') {
-        end = currentTime.getTime();
+        end = new Date(status.timestamp).getTime();
       } else if (status.EventEnd === 'Unknown' || status.EventEnd === 'N/A') {
         return 'N/A';
       } else {
@@ -52,6 +44,8 @@ function App() {
   };
 
   useEffect(() => {
+    let isMounted = true;
+    
     const fetchData = async () => {
       try {
         const [statusRes, historyRes, recentRes] = await Promise.all([
@@ -60,6 +54,7 @@ function App() {
           axios.get(`${API_URL}/recent_flares`)
         ]);
         
+        if (!isMounted) return;
         setStatus(statusRes.data);
         setRecentFlares(recentRes.data);
         
@@ -76,14 +71,17 @@ function App() {
         setHistory(formattedHistory);
       } catch (error) {
         console.error("Error fetching data:", error);
-      } finally {
-        setLoading(false);
       }
     };
 
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
+    const fetchLoop = async () => {
+      if (!isMounted) return;
+      await fetchData();
+      if (isMounted) setTimeout(fetchLoop, 5000); // 5s loop
+    };
+    
+    fetchLoop();
+    return () => { isMounted = false; };
   }, []);
 
   if (loading || !status) {
@@ -186,7 +184,7 @@ function App() {
           </h1>
           <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
             <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}, 0 0 24px ${currentColor}` }}></div>
-            SYSTEM LIVE (IST) / {currentTime.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit'})}
+            SYSTEM LIVE (IST) / {new Date(status.timestamp).toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit'})}
           </div>
         </motion.header>
 
@@ -490,12 +488,13 @@ function App() {
                   <span className="hud-tag" style={{ '--glow-color': 'var(--neon-green)' }}>AI-MODEL: XGB-V3.1</span>
                 </div>
               </div>
-              <div className="forecast-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.2rem', padding: '0.5rem 0' }}>
+              <div className="forecast-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1.2rem', padding: '0.5rem 0' }}>
                 {[
                   { key: '15m', label: '+15 MINUTES', offsetMin: 15 },
                   { key: '30m', label: '+30 MINUTES', offsetMin: 30 },
                   { key: '1h', label: '+1 HOUR', offsetMin: 60 },
-                  { key: '2h', label: '+2 HOURS', offsetMin: 120 }
+                  { key: '2h', label: '+2 HOURS', offsetMin: 120 },
+                  { key: '4h', label: '+4 HOURS', offsetMin: 240 }
                 ].map(h => {
                   const f = status.FutureForecasts ? status.FutureForecasts[h.key] : null;
                   if (!f) return null;
@@ -503,7 +502,7 @@ function App() {
                   const cardColor = classColors[f.RiskLabel] || classColors['NOMINAL'];
                   const cardTheme = getThemeClass(f.RiskLabel);
                   
-                  const targetTime = new Date(currentTime.getTime() + h.offsetMin * 60 * 1000);
+                  const targetTime = new Date(new Date(status.timestamp).getTime() + h.offsetMin * 60 * 1000);
                   const targetTimeString = targetTime.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit'});
                   
                   return (

@@ -1,26 +1,21 @@
 """
-api.py — SolarForge FastAPI Backend
-====================================
-Serves real-time solar flare telemetry and ML predictions from
-the Aditya-L1 dataset (dataset.parquet) directly.
-
-The dataset is loaded at startup, time-shifted to the current
-session, and served at 6x playback speed so users can watch
-solar flare transitions live within minutes instead of hours.
-
-Endpoints:
-    GET /api/status       — Current telemetry row + event metrics + forecast
-    GET /api/history      — Last 24 simulated hours of telemetry
-    GET /api/recent_flares — Last 10 detected flare events
+api.py — SolarForge Simulated API Backend
+=============================================
+Serves pre-computed predictions at 6x speed using historical Aditya-L1 data.
 """
-import pandas as pd
+
+import os
+import time
+import warnings
 import numpy as np
+import pandas as pd
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import time
-from datetime import datetime, timedelta
+from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="SolarForge API", version="2.0.0")
+warnings.filterwarnings('ignore')
+
+app = FastAPI(title="SolarForge API (6x Simulation)", version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,237 +26,226 @@ app.add_middleware(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Data loading & preprocessing (runs once at startup)
+# Data Loading & Simulation Time Sync
 # ─────────────────────────────────────────────────────────────────────────────
 CSV_PATH = 'predictions_output.csv.gz'
+SIM_SPEED = 6.0
 
 print(f"[SolarForge] Loading telemetry from {CSV_PATH}...")
-df = pd.read_csv(CSV_PATH)
+try:
+    _df = pd.read_csv(CSV_PATH)
+    _df['timestamp'] = pd.to_datetime(_df['timestamp'])
+    _df = _df.sort_values('timestamp').reset_index(drop=True)
+    print(f"[SolarForge] Loaded {len(_df):,} rows.")
+except Exception as e:
+    print(f"[SolarForge] Error loading data: {e}")
+    _df = pd.DataFrame()
 
-print(f"[SolarForge] Loaded {len(df):,} rows.")
+# Time synchronization
+REAL_START_TIME = time.time()
+if not _df.empty:
+    SIM_START_TIME = _df['timestamp'].iloc[0]
+    SIM_END_TIME = _df['timestamp'].iloc[-1]
+else:
+    SIM_START_TIME = pd.Timestamp.now()
+    SIM_END_TIME = pd.Timestamp.now()
 
-# Ensure timestamp column is datetime
-df['timestamp'] = pd.to_datetime(df['timestamp'])
+def get_current_sim_time():
+    """Calculates the current time in the simulation."""
+    global REAL_START_TIME
+    if _df.empty: return pd.Timestamp.now()
+    elapsed_real_seconds = time.time() - REAL_START_TIME
+    elapsed_sim_seconds = elapsed_real_seconds * SIM_SPEED
+    
+    current_time = SIM_START_TIME + pd.Timedelta(seconds=elapsed_sim_seconds)
+    
+    # Loop back to start if we reach the end
+    if current_time > SIM_END_TIME:
+        # Reset the start time
+        REAL_START_TIME = time.time()
+        return SIM_START_TIME
+        
+    return current_time
 
-# Sort chronologically and reset index for fast searchsorted
-df = df.sort_values('timestamp').reset_index(drop=True)
-
-# Memory optimisation — reduces RAM from ~280 MB to ~43 MB
-df['SoLEXS_COUNTS']      = df['SoLEXS_COUNTS'].astype('float32')
-df['HEL1OS_COUNTS']      = df['HEL1OS_COUNTS'].astype('float32')
-df['PredictedClass']     = df['PredictedClass'].astype('int8')
-df['CProb']              = df['CProb'].astype('float32')
-df['MProb']              = df['MProb'].astype('float32')
-df['XProb']              = df['XProb'].astype('float32')
-df['EstimatedPeakCounts']= df['EstimatedPeakCounts'].astype('float32')
-df['MagnitudeString']    = df['MagnitudeString'].astype('category')
-df['RiskLabel']          = df['RiskLabel'].astype('category')
-
-# Pre-slice flare rows once to speed up /api/recent_flares
-df_flares = df[df['PredictedClass'] >= 1].copy()
-
-# ── Time-shift: align dataset start to NOW so the dashboard shows
-#    live-looking data relative to the user's current session time ──────────
-DATA_START        = df['timestamp'].iloc[0]
-SERVER_START_TIME = pd.Timestamp.now()
-_time_offset      = SERVER_START_TIME - DATA_START
-df['timestamp']         = df['timestamp'] + _time_offset
-df_flares['timestamp']  = df_flares['timestamp'] + _time_offset
-
-# ── Pre-build flare events list at startup (O(1) per request) ───────────────
-all_events = []
-if len(df_flares) > 0:
-    df_flares['gap']       = df_flares['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
-    df_flares['window_id'] = df_flares['gap'].cumsum()
-    for wid, grp in df_flares.groupby('window_id'):
-        cls   = int(grp['PredictedClass'].max())
-        start = grp['timestamp'].min()
-        end   = grp['timestamp'].max()
-        mag   = grp.loc[grp['PredictedClass'] == cls, 'MagnitudeString'].iloc[0]
-        all_events.append({"start": start, "end": end,
-                           "class_level": cls, "magnitude": str(mag)})
-
-# Column index cache
-_pred_col_idx  = df.columns.get_loc('PredictedClass')
-_ts_col_idx    = df.columns.get_loc('timestamp')
-_peak_col_idx  = df.columns.get_loc('EstimatedPeakCounts')
+def get_current_idx(sim_time):
+    """Finds the index of the most recent row <= sim_time."""
+    if _df.empty: return 0
+    # searchsorted returns the index where sim_time would be inserted
+    idx = _df['timestamp'].searchsorted(sim_time, side='right') - 1
+    return max(0, min(idx, len(_df) - 1))
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Simulation engine — 6x real-time playback
+# Helper utilities
 # ─────────────────────────────────────────────────────────────────────────────
-SERVER_START = time.time()
-
-
-def get_simulated_time() -> pd.Timestamp:
-    """Return the current simulated dataset time (6x faster than wall-clock)."""
-    elapsed = time.time() - SERVER_START
-    return SERVER_START_TIME + timedelta(seconds=elapsed * 6)
-
-
-def to_real_time(sim_time):
-    """Map a simulated timestamp back to a wall-clock time for display."""
-    if sim_time is None or (isinstance(sim_time, float) and np.isnan(sim_time)):
-        return sim_time
-    if isinstance(sim_time, str) and sim_time in ("Ongoing", "Unknown", "N/A"):
-        return sim_time
-    try:
-        sim_time = pd.to_datetime(sim_time)
-    except Exception:
-        return sim_time
-    return SERVER_START_TIME + (sim_time - SERVER_START_TIME) / 6
-
-
-def _safe_val(v):
-    """Convert numpy types to Python-native for JSON serialisation."""
-    if isinstance(v, (np.integer,)):
-        return int(v)
-    if isinstance(v, (np.floating,)):
-        return float(v)
-    if isinstance(v, float) and np.isnan(v):
-        return None
+def _safe(v):
+    if isinstance(v, (np.integer, int)): return int(v)
+    if isinstance(v, (np.floating, float)): return float(v)
+    if isinstance(v, float) and np.isnan(v): return None
+    if isinstance(v, pd.Timestamp): return str(v)
     return v
 
-
-def _magnitude_to_watts(mag: str) -> str:
-    """Convert GOES magnitude string (e.g. 'X2.4') to W/m²."""
-    if not mag or len(mag) < 2:
-        return "N/A"
-    cls = mag[0].upper()
-    multipliers = {'A': 1e-8, 'B': 1e-7, 'C': 1e-6, 'M': 1e-5, 'X': 1e-4}
-    if cls not in multipliers:
-        return "N/A"
-    try:
-        val = float(mag[1:])
-        return f"{val * multipliers[cls]:.2e}"
-    except ValueError:
-        return "N/A"
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Endpoints
+# API Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/api/status")
 def get_status():
     try:
-        current_time = get_simulated_time()
+        if _df.empty:
+            return {"error": "Data not available"}
 
-        idx = int(df['timestamp'].searchsorted(current_time, side='right')) - 1
-        if idx < 0:
-            idx = 0
-
-        row = {k: _safe_val(v) for k, v in df.iloc[idx].to_dict().items()}
-        row['timestamp']       = str(to_real_time(row['timestamp']))
-        row['WattsPerSqMeter'] = _magnitude_to_watts(str(row.get('MagnitudeString', '')))
+        sim_time = get_current_sim_time()
+        idx = get_current_idx(sim_time)
+        
+        row = {k: _safe(v) for k, v in _df.iloc[idx].to_dict().items()}
+        row['timestamp'] = str(sim_time) # Return the exact simulation time
+        row['last_refreshed'] = str(pd.Timestamp.now())
+        row['data_source'] = f"Aditya-L1 (6x Simulation Loop)"
 
         # Event tracking
-        current_class = int(row.get('PredictedClass', 0))
+        classes = _df['PredictedClass'].values
+        current_class = int(classes[idx])
+
         if current_class >= 1:
-            start_idx = idx
-            while start_idx > 0 and int(df.iat[start_idx, _pred_col_idx]) >= 1:
-                start_idx -= 1
-            if int(df.iat[start_idx, _pred_col_idx]) == 0:
-                start_idx += 1
-            event_window = df.iloc[start_idx:idx + 1]
-            peak_row = event_window.iloc[event_window['EstimatedPeakCounts'].values.argmax()]
-            row['EventStart']  = str(to_real_time(event_window.iloc[0]['timestamp']))
-            row['EventPeak']   = str(to_real_time(peak_row['timestamp']))
-            row['EventEnd']    = "Ongoing"
+            start_i = idx
+            while start_i > 0 and classes[start_i - 1] >= 1:
+                start_i -= 1
+            window = _df.iloc[start_i:idx + 1]
+            peak_i = window['EstimatedPeakCounts'].values.argmax()
+            row['EventStart'] = str(window.iloc[0]['timestamp'])
+            row['EventPeak'] = str(window.iloc[peak_i]['timestamp'])
+            row['EventEnd'] = "Ongoing"
             row['EventStatus'] = "ACTIVE"
         else:
-            last_active = idx
-            while last_active >= 0 and int(df.iat[last_active, _pred_col_idx]) == 0:
+            last_active = idx - 1
+            while last_active >= 0 and classes[last_active] == 0:
                 last_active -= 1
             if last_active >= 0:
                 s = last_active
-                while s > 0 and int(df.iat[s, _pred_col_idx]) >= 1:
+                while s > 0 and classes[s - 1] >= 1:
                     s -= 1
-                if int(df.iat[s, _pred_col_idx]) == 0:
-                    s += 1
-                event_window = df.iloc[s:last_active + 1]
-                peak_row = event_window.iloc[event_window['EstimatedPeakCounts'].values.argmax()]
-                row['EventStart'] = str(to_real_time(event_window.iloc[0]['timestamp']))
-                row['EventPeak']  = str(to_real_time(peak_row['timestamp']))
-                row['EventEnd']   = str(to_real_time(df.iat[last_active + 1, _ts_col_idx])) \
-                    if last_active + 1 < len(df) else "Unknown"
+                window = _df.iloc[s:last_active + 1]
+                peak_i = window['EstimatedPeakCounts'].values.argmax()
+                row['EventStart'] = str(window.iloc[0]['timestamp'])
+                row['EventPeak']  = str(window.iloc[peak_i]['timestamp'])
+                row['EventEnd']   = str(_df.iloc[last_active]['timestamp'])
             else:
                 row['EventStart'] = row['EventPeak'] = row['EventEnd'] = "N/A"
             row['EventStatus'] = "NOMINAL"
 
-        # Multi-horizon lookahead (T+15m, T+30m, T+1h, T+2h at 6× playback)
-        horizons = {"15m": 15 * 6, "30m": 30 * 6, "1h": 60 * 6, "2h": 120 * 6}
-        forecasts = {}
-        for key, mins in horizons.items():
-            future_t   = current_time + timedelta(minutes=mins)
-            future_idx = int(df['timestamp'].searchsorted(future_t, side='left'))
-            if future_idx < len(df):
-                fr   = df.iloc[future_idx]
-                c_p  = float(fr.get('CProb', 0.0))
-                m_p  = float(fr.get('MProb', 0.0))
-                x_p  = float(fr.get('XProb', 0.0))
-                safe = max(0.0, 1.0 - c_p - m_p - x_p)
-                forecasts[key] = {
-                    "RiskLabel":       str(fr.get('RiskLabel', 'NOMINAL')),
-                    "MagnitudeString": str(fr.get('MagnitudeString', '')),
-                    "CProb": c_p, "MProb": m_p, "XProb": x_p, "SafeProb": safe,
-                    "PredictedClass":  int(fr.get('PredictedClass', 0))
-                }
-            else:
-                forecasts[key] = {"RiskLabel": "NOMINAL", "MagnitudeString": "",
-                                  "CProb": 0.0, "MProb": 0.0, "XProb": 0.0,
-                                  "SafeProb": 1.0, "PredictedClass": 0}
-        row['FutureForecasts'] = forecasts
+        # Read Multi-horizon forecasts directly from the CURRENT row (Zero Data Leakage)
+        if 'CProb_15m' in _df.columns:
+            try:
+                def make_magnitude_val(cls, counts):
+                    if cls == 0: return 'NOMINAL'
+                    if cls == 1: return f"C{min(counts/1000,  9.9):.1f}"
+                    if cls == 2: return f"M{min(counts/5000,  9.9):.1f}"
+                    return     f"X{min(counts/20000, 9.9):.1f}"
+
+                risk_map = {0: 'NOMINAL', 1: 'LOW', 2: 'MODERATE', 3: 'CRITICAL'}
+                future_forecasts = {}
+                for h in ["15m", "30m", "1h", "2h", "4h"]:
+                    c_prob = float(_df.iloc[idx][f"CProb_{h}"])
+                    m_prob = float(_df.iloc[idx][f"MProb_{h}"])
+                    x_prob = float(_df.iloc[idx][f"XProb_{h}"])
+                    cls = int(_df.iloc[idx][f"PredClass_{h}"])
+                    safe_prob = float(1.0 - max(c_prob, m_prob, x_prob))
+                    
+                    future_forecasts[h] = {
+                        "CProb": c_prob,
+                        "MProb": m_prob,
+                        "XProb": x_prob,
+                        "SafeProb": safe_prob,
+                        "RiskLabel": risk_map[cls],
+                        "MagnitudeString": make_magnitude_val(cls, float(_df.iloc[idx]["SoLEXS_COUNTS"]))
+                    }
+                row['FutureForecasts'] = future_forecasts
+            except Exception as e:
+                print("Dynamic FutureForecasts reconstruction error:", e)
+                row['FutureForecasts'] = {}
+        elif 'FutureForecastsJSON' in _df.columns:
+            import json
+            try:
+                row['FutureForecasts'] = json.loads(_df.iloc[idx]['FutureForecastsJSON'])
+            except Exception as e:
+                print("JSON parse error:", e)
+                row['FutureForecasts'] = {}
+        else:
+            row['FutureForecasts'] = {}
+            
         return row
 
     except Exception as e:
         import traceback; traceback.print_exc()
         return {"error": str(e)}
 
-
 @app.get("/api/history")
 def get_history():
     try:
-        current_time = get_simulated_time()
-        idx = int(df['timestamp'].searchsorted(current_time, side='right')) - 1
-        if idx < 0:
-            return []
-        start_idx = max(0, idx - 1440 + 1)
-        slice_df  = df.iloc[start_idx:idx + 1:5].copy()
-        slice_df['timestamp'] = slice_df['timestamp'].apply(lambda t: str(to_real_time(t)))
+        if _df.empty: return []
+        sim_time = get_current_sim_time()
+        idx = get_current_idx(sim_time)
+        
+        cutoff_ts = sim_time - pd.Timedelta(hours=24)
+        cutoff_idx = _df['timestamp'].searchsorted(cutoff_ts, side='left')
+        cutoff_idx = max(0, min(cutoff_idx, idx))
+        
+        # Subsample to avoid huge payloads
+        hist_df = _df.iloc[cutoff_idx:idx+1:5] 
+        
         records = []
-        for r in slice_df.to_dict(orient="records"):
-            records.append({k: _safe_val(v) if not isinstance(v, str) else v
-                            for k, v in r.items()})
+        for r in hist_df.to_dict(orient="records"):
+            records.append({k: _safe(v) for k, v in r.items()})
         return records
     except Exception as e:
         import traceback; traceback.print_exc()
         return {"error": str(e)}
 
-
 @app.get("/api/recent_flares")
 def get_recent_flares():
     try:
-        current_time = get_simulated_time()
+        if _df.empty: return []
+        sim_time = get_current_sim_time()
+        idx = get_current_idx(sim_time)
+        
+        # Look back 7 days in simulation time
+        cutoff_ts = sim_time - pd.Timedelta(days=7)
+        cutoff_idx = _df['timestamp'].searchsorted(cutoff_ts, side='left')
+        
+        flare_df = _df.iloc[cutoff_idx:idx+1]
+        flare_df = flare_df[flare_df['PredictedClass'] >= 1].copy()
+        
+        if flare_df.empty: return []
+
+        flare_df['gap'] = flare_df['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
+        flare_df['window_id'] = flare_df['gap'].cumsum()
+
         events = []
-        for ev in all_events:
-            if ev['start'] <= current_time:
-                ongoing = current_time < ev['end']
-                events.append({
-                    "start":       str(to_real_time(ev['start'])),
-                    "end":         "Ongoing" if ongoing else str(to_real_time(ev['end'])),
-                    "class_level": ev['class_level'],
-                    "magnitude":   ev['magnitude']
-                })
+        for _, grp in flare_df.groupby('window_id'):
+            cls = int(grp['PredictedClass'].max())
+            mag = str(grp.loc[grp['PredictedClass'] == cls, 'MagnitudeString'].iloc[0])
+            events.append({
+                "start": str(grp['timestamp'].min()),
+                "end": str(grp['timestamp'].max()),
+                "class_level": cls,
+                "magnitude": mag
+            })
         return events[-10:]
     except Exception as e:
         import traceback; traceback.print_exc()
         return {"error": str(e)}
 
+@app.get("/api/health")
+def health():
+    return {
+        "status": "online",
+        "mode": "6x Simulation",
+        "current_sim_time": str(get_current_sim_time()),
+        "data_rows": len(_df)
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Static frontend (served from frontend/dist after `npm run build`)
+# Serve React frontend
 # ─────────────────────────────────────────────────────────────────────────────
-import os
-from fastapi.staticfiles import StaticFiles
 if os.path.exists("frontend/dist"):
     app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 

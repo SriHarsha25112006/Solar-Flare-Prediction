@@ -8,6 +8,7 @@ __pycache__/
 # Large raw data files (too large for GitHub — local only)
 dataset.parquet
 *.parquet
+*.pkl
 
 # Keep frontend/dist since Render will serve it directly
 !frontend/dist/
