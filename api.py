@@ -86,6 +86,12 @@ def _safe(v):
     if isinstance(v, pd.Timestamp): return str(v)
     return v
 
+def make_magnitude_val(cls, counts):
+    if cls == 0: return 'NOMINAL'
+    if cls == 1: return f"C{max(1.0, min(counts/1000,  9.9)):.1f}"
+    if cls == 2: return f"M{max(1.0, min(counts/5000,  9.9)):.1f}"
+    return     f"X{max(1.0, min(counts/20000, 9.9)):.1f}"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # API Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +115,12 @@ def get_status():
         risk_map_main = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
         row['RiskLabel'] = risk_map_main.get(int(row['PredictedClass']), 'NOMINAL')
         
+        # Override MagnitudeString dynamically based on the peak counts in the 15-minute lookahead window
+        cls_main = int(row['PredictedClass'])
+        peak_window_main = _df.iloc[idx : idx + 4] # 15 minutes is 3 samples (5-minute cadence)
+        peak_counts_main = float(peak_window_main['SoLEXS_COUNTS'].max())
+        row['MagnitudeString'] = make_magnitude_val(cls_main, peak_counts_main)
+
         # Calculate WattsPerSqMeter dynamically from SoLEXS_COUNTS (approx. 5e-9 W/m² per count)
         counts = float(row.get('SoLEXS_COUNTS', 0.0))
         flux = max(1.0e-8, counts * 5.0e-9)
@@ -148,13 +160,8 @@ def get_status():
         # Read Multi-horizon forecasts directly from the CURRENT row (Zero Data Leakage)
         if 'CProb_15m' in _df.columns:
             try:
-                def make_magnitude_val(cls, counts):
-                    if cls == 0: return 'NOMINAL'
-                    if cls == 1: return f"C{min(counts/1000,  9.9):.1f}"
-                    if cls == 2: return f"M{min(counts/5000,  9.9):.1f}"
-                    return     f"X{min(counts/20000, 9.9):.1f}"
-
                 risk_map = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
+                offset_map = {"15m": 3, "30m": 6, "1h": 12, "2h": 24, "4h": 48}
                 future_forecasts = {}
                 for h in ["15m", "30m", "1h", "2h", "4h"]:
                     c_prob = float(_df.iloc[idx][f"CProb_{h}"])
@@ -163,13 +170,18 @@ def get_status():
                     cls = int(_df.iloc[idx][f"PredClass_{h}"])
                     safe_prob = float(1.0 - max(c_prob, m_prob, x_prob))
                     
+                    # Look ahead to find the peak count within this horizon window
+                    offset = offset_map[h]
+                    future_window = _df.iloc[idx : idx + offset + 1]
+                    future_counts = float(future_window["SoLEXS_COUNTS"].max())
+
                     future_forecasts[h] = {
                         "CProb": c_prob,
                         "MProb": m_prob,
                         "XProb": x_prob,
                         "SafeProb": safe_prob,
                         "RiskLabel": risk_map[cls],
-                        "MagnitudeString": make_magnitude_val(cls, float(_df.iloc[idx]["SoLEXS_COUNTS"]))
+                        "MagnitudeString": make_magnitude_val(cls, future_counts)
                     }
                 row['FutureForecasts'] = future_forecasts
             except Exception as e:
@@ -202,8 +214,16 @@ def get_history():
         hist_df = _df.iloc[start_idx:idx + 1] 
         
         records = []
-        for r in hist_df.to_dict(orient="records"):
-            records.append({k: _safe(v) for k, v in r.items()})
+        for i, r in zip(hist_df.index, hist_df.to_dict(orient="records")):
+            # Compute lookahead peak counts for this historical sample
+            cls = int(r['PredictedClass'])
+            peak_window = _df.iloc[i : i + 4] # 15 min lookahead (3 steps)
+            peak_counts = float(peak_window['SoLEXS_COUNTS'].max())
+            
+            # Override fields
+            r_safe = {k: _safe(v) for k, v in r.items()}
+            r_safe['MagnitudeString'] = make_magnitude_val(cls, peak_counts)
+            records.append(r_safe)
         return records
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -229,7 +249,9 @@ def get_recent_flares():
         events = []
         for _, grp in flare_df.groupby('window_id'):
             cls = int(grp['PredictedClass'].max())
-            mag = str(grp.loc[grp['PredictedClass'] == cls, 'MagnitudeString'].iloc[0])
+            # Calculate the magnitude based on the actual peak counts achieved during the event
+            peak_counts = float(grp['SoLEXS_COUNTS'].max())
+            mag = make_magnitude_val(cls, peak_counts)
             events.append({
                 "start": str(grp['timestamp'].min()),
                 "end": str(grp['timestamp'].max()),

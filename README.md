@@ -6,7 +6,7 @@
 ### Real-Time Solar Flare Prediction · ISRO Aditya-L1
 
 [![Live Dashboard](https://img.shields.io/badge/🚀%20Live%20Dashboard-Online-brightgreen?style=for-the-badge)](https://solar-flare-prediction-bscp.onrender.com)
-[![GitHub](https://img.shields.io/badge/GitHub-SriHarsha25112006-181717?style=for-the-badge&logo=github)](https://github.com/SriHarsha25112006/Solar-Flare-Prediction)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github)](https://github.com/SriHarsha25112006/Solar-Flare-Prediction)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![LightGBM](https://img.shields.io/badge/LightGBM-ML%20Engine-FF6F00?style=for-the-badge)](https://lightgbm.readthedocs.io)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
@@ -230,7 +230,7 @@ The backend loads `dataset.parquet` at startup, reduces memory footprint by **~8
 
 **Built with ❤️ for ISRO Bharatiya Antariksh Hackathon 2026**
 
-*Team SolarForge · Sri Harsha ([@SriHarsha25112006](https://github.com/SriHarsha25112006))*
+*Team SolarForge*
 
 [![Live Dashboard](https://img.shields.io/badge/🌟%20Try%20the%20Live%20Dashboard-Click%20Here-FF6F00?style=for-the-badge)](https://solar-flare-prediction-bscp.onrender.com)
 

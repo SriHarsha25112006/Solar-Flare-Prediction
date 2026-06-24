@@ -149,15 +149,22 @@ for h, suffix in [("15m", "15"), ("30m", "30"), ("1h", "60"), ("2h", "120"), ("4
     df[f"XProb_{h}"] = x_prob.astype('float32')
     df[f"PredClass_{h}"] = pred_cls.astype('int8')
 
-def make_magnitude(row):
-    cls    = int(row['PredictedClass'])
-    counts = float(row['SoLEXS_COUNTS'])
-    if cls == 0: return 'A1.0'
-    if cls == 1: return f"C{min(counts/1000,  9.9):.1f}"
-    if cls == 2: return f"M{min(counts/5000,  9.9):.1f}"
-    return     f"X{min(counts/20000, 9.9):.1f}"
+# Compute MagnitudeString with 15-minute lookahead peak counts
+magnitudes = []
+for i in range(len(df)):
+    cls = int(df['PredictedClass'].iloc[i])
+    # peak counts in the next 15 minutes (3 samples of 5-minute cadence)
+    peak_counts = float(df['SoLEXS_COUNTS'].iloc[i : i + 4].max())
+    if cls == 0:
+        magnitudes.append('NOMINAL')
+    elif cls == 1:
+        magnitudes.append(f"C{max(1.0, min(peak_counts/1000, 9.9)):.1f}")
+    elif cls == 2:
+        magnitudes.append(f"M{max(1.0, min(peak_counts/5000, 9.9)):.1f}")
+    else:
+        magnitudes.append(f"X{max(1.0, min(peak_counts/20000, 9.9)):.1f}")
 
-df['MagnitudeString']     = df.apply(make_magnitude, axis=1)
+df['MagnitudeString']     = magnitudes
 df['RiskLabel']           = df['PredictedClass'].map({0:'NOMINAL',1:'C-CLASS',2:'M-CLASS',3:'X-CLASS'})
 df['EstimatedPeakCounts'] = df['SoLEXS_COUNTS'].astype('float32')
 
