@@ -317,69 +317,78 @@ def get_status():
         return {"error": str(e)}
 
 @app.get("/api/history")
+import functools
+
+@functools.lru_cache(maxsize=4)
+def compute_history(idx):
+    if _df.empty: return []
+    # 24 hours of simulated history = 288 samples at 5-minute cadence
+    start_idx = max(0, idx - 288 + 1)
+    hist_df = _df.iloc[start_idx:idx + 1] 
+    
+    records = []
+    for i, r in zip(hist_df.index, hist_df.to_dict(orient="records")):
+        cls_model_h = int(r['PredictedClass'])
+        peak_counts = get_event_peak_counts(_df, i) if cls_model_h >= 1 else 0.0
+        
+        # Synchronize historical probabilities to match the model class directly
+        nom_s, c_s, m_s, x_s = synchronize_probs(
+            float(r['CProb']), float(r['MProb']), float(r['XProb']),
+            cls_model_h, 0.0600, 0.0100, 0.0500
+        )
+        
+        risk_map_h = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
+        r_safe = {k: _safe(v) for k, v in r.items()}
+        r_safe['PredictedClass'] = cls_model_h
+        r_safe['RiskLabel'] = risk_map_h[cls_model_h]
+        r_safe['CProb'] = c_s
+        r_safe['MProb'] = m_s
+        r_safe['XProb'] = x_s
+        r_safe['MagnitudeString'] = make_magnitude_val(cls_model_h, peak_counts)
+        records.append(r_safe)
+    return records
+
+@app.get("/api/history")
 def get_history():
     try:
-        if _df.empty: return []
         idx = get_current_idx()
-        
-        # 24 hours of simulated history = 288 samples at 5-minute cadence
-        start_idx = max(0, idx - 288 + 1)
-        hist_df = _df.iloc[start_idx:idx + 1] 
-        
-        records = []
-        for i, r in zip(hist_df.index, hist_df.to_dict(orient="records")):
-            cls_model_h = int(r['PredictedClass'])
-            peak_counts = get_event_peak_counts(_df, i) if cls_model_h >= 1 else 0.0
-            
-            # Synchronize historical probabilities to match the model class directly
-            nom_s, c_s, m_s, x_s = synchronize_probs(
-                float(r['CProb']), float(r['MProb']), float(r['XProb']),
-                cls_model_h, 0.0600, 0.0100, 0.0500
-            )
-            
-            risk_map_h = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
-            r_safe = {k: _safe(v) for k, v in r.items()}
-            r_safe['PredictedClass'] = cls_model_h
-            r_safe['RiskLabel'] = risk_map_h[cls_model_h]
-            r_safe['CProb'] = c_s
-            r_safe['MProb'] = m_s
-            r_safe['XProb'] = x_s
-            r_safe['MagnitudeString'] = make_magnitude_val(cls_model_h, peak_counts)
-            records.append(r_safe)
-        return records
+        return compute_history(idx)
     except Exception as e:
         import traceback; traceback.print_exc()
         return {"error": str(e)}
 
+@functools.lru_cache(maxsize=4)
+def compute_recent_flares(idx):
+    if _df.empty: return []
+    # Look back 7 days in simulation time (2016 samples at 5-minute cadence)
+    cutoff_idx = max(0, idx - 2016)
+    
+    flare_df = _df.iloc[cutoff_idx:idx+1]
+    flare_df = flare_df[flare_df['PredictedClass'] >= 1].copy()
+    
+    if flare_df.empty: return []
+
+    flare_df['gap'] = flare_df['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
+    flare_df['window_id'] = flare_df['gap'].cumsum()
+
+    events = []
+    for _, grp in flare_df.groupby('window_id'):
+        cls = int(grp['PredictedClass'].max())
+        peak_counts = float(grp['SoLEXS_COUNTS'].max())
+        mag = make_magnitude_val(cls, peak_counts)
+        events.append({
+            "start": str(grp['timestamp'].min()),
+            "end": str(grp['timestamp'].max()),
+            "class_level": cls,
+            "magnitude": mag
+        })
+    return events[-10:]
+
 @app.get("/api/recent_flares")
 def get_recent_flares():
     try:
-        if _df.empty: return []
         idx = get_current_idx()
-        
-        # Look back 7 days in simulation time (2016 samples at 5-minute cadence)
-        cutoff_idx = max(0, idx - 2016)
-        
-        flare_df = _df.iloc[cutoff_idx:idx+1]
-        flare_df = flare_df[flare_df['PredictedClass'] >= 1].copy()
-        
-        if flare_df.empty: return []
- 
-        flare_df['gap'] = flare_df['timestamp'].diff().dt.total_seconds().fillna(0) > 3600
-        flare_df['window_id'] = flare_df['gap'].cumsum()
- 
-        events = []
-        for _, grp in flare_df.groupby('window_id'):
-            cls = int(grp['PredictedClass'].max())
-            peak_counts = float(grp['SoLEXS_COUNTS'].max())
-            mag = make_magnitude_val(cls, peak_counts)
-            events.append({
-                "start": str(grp['timestamp'].min()),
-                "end": str(grp['timestamp'].max()),
-                "class_level": cls,
-                "magnitude": mag
-            })
-        return events[-10:]
+        return compute_recent_flares(idx)
     except Exception as e:
         import traceback; traceback.print_exc()
         return {"error": str(e)}
