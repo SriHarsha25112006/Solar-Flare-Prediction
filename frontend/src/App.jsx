@@ -77,7 +77,7 @@ function App() {
     const fetchLoop = async () => {
       if (!isMounted) return;
       await fetchData();
-      if (isMounted) setTimeout(fetchLoop, 5000); // 5s loop
+      if (isMounted) setTimeout(fetchLoop, 2000); // 2s loop
     };
     
     fetchLoop();
@@ -184,7 +184,7 @@ function App() {
           </h1>
           <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
             <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}, 0 0 24px ${currentColor}` }}></div>
-            SYSTEM LIVE (IST) / {new Date(status.timestamp).toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit'})}
+            SIMULATION RUNNING (6x) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
           </div>
         </motion.header>
 

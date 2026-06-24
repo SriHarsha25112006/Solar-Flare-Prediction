@@ -17,10 +17,10 @@ print("[1/6] Loading engineered ultimate dataset...")
 df_engineered = pd.read_parquet('dataset_engineered_ultimate.parquet')
 print(f"      Loaded {len(df_engineered):,} rows (10-second cadence).")
 
-# 1-min intervals for the dashboard (every 6th row of the 10-second cadence)
-df = df_engineered.iloc[::6].copy().reset_index(drop=True)
+# 5-min intervals for the dashboard (every 30th row of the 10-second cadence)
+df = df_engineered.iloc[::30].copy().reset_index(drop=True)
 del df_engineered
-print(f"[2/6] Downsampled to {len(df):,} rows (1-min cadence).")
+print(f"[2/6] Downsampled to {len(df):,} rows (5-min cadence).")
 
 print("[3/6] Computing scale-invariant ratio features...")
 df['solexs_var_1h_30m_ratio'] = df['solexs_var_1h'] / (df['solexs_var_30m'] + 1.0)

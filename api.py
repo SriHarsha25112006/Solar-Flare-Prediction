@@ -29,50 +29,52 @@ app.add_middleware(
 # Data Loading & Simulation Time Sync
 # ─────────────────────────────────────────────────────────────────────────────
 CSV_PATH = 'predictions_output.csv.gz'
-SIM_SPEED = 6.0
+SAMPLES_PER_SECOND = 6.0
 
 print(f"[SolarForge] Loading telemetry from {CSV_PATH}...")
 try:
-    _df = pd.read_csv(CSV_PATH)
+    # Explicit dtypes to minimize memory footprint
+    dtypes = {
+        'SoLEXS_COUNTS': 'float32',
+        'HEL1OS_COUNTS': 'float32',
+        'PredictedClass': 'int8',
+        'CProb': 'float32',
+        'MProb': 'float32',
+        'XProb': 'float32',
+        'EstimatedPeakCounts': 'float32',
+        'MagnitudeString': 'category',
+        'RiskLabel': 'category',
+    }
+    for h in ["15m", "30m", "1h", "2h", "4h"]:
+        dtypes[f"CProb_{h}"] = 'float32'
+        dtypes[f"MProb_{h}"] = 'float32'
+        dtypes[f"XProb_{h}"] = 'float32'
+        dtypes[f"PredClass_{h}"] = 'int8'
+
+    _df = pd.read_csv(CSV_PATH, dtype=dtypes)
     _df['timestamp'] = pd.to_datetime(_df['timestamp'])
     _df = _df.sort_values('timestamp').reset_index(drop=True)
-    print(f"[SolarForge] Loaded {len(_df):,} rows.")
+    print(f"[SolarForge] Loaded {len(_df):,} rows. Memory usage: {_df.memory_usage(deep=True).sum() / (1024*1024):.2f} MB")
 except Exception as e:
     print(f"[SolarForge] Error loading data: {e}")
     _df = pd.DataFrame()
 
 # Time synchronization
 REAL_START_TIME = time.time()
-if not _df.empty:
-    SIM_START_TIME = _df['timestamp'].iloc[0]
-    SIM_END_TIME = _df['timestamp'].iloc[-1]
-else:
-    SIM_START_TIME = pd.Timestamp.now()
-    SIM_END_TIME = pd.Timestamp.now()
 
-def get_current_sim_time():
-    """Calculates the current time in the simulation."""
+def get_current_idx():
+    """Calculates the current active index in the simulation based on elapsed time."""
     global REAL_START_TIME
-    if _df.empty: return pd.Timestamp.now()
-    elapsed_real_seconds = time.time() - REAL_START_TIME
-    elapsed_sim_seconds = elapsed_real_seconds * SIM_SPEED
-    
-    current_time = SIM_START_TIME + pd.Timedelta(seconds=elapsed_sim_seconds)
-    
-    # Loop back to start if we reach the end
-    if current_time > SIM_END_TIME:
-        # Reset the start time
-        REAL_START_TIME = time.time()
-        return SIM_START_TIME
-        
-    return current_time
-
-def get_current_idx(sim_time):
-    """Finds the index of the most recent row <= sim_time."""
     if _df.empty: return 0
-    # searchsorted returns the index where sim_time would be inserted
-    idx = _df['timestamp'].searchsorted(sim_time, side='right') - 1
-    return max(0, min(idx, len(_df) - 1))
+    elapsed_real_seconds = time.time() - REAL_START_TIME
+    idx = int(elapsed_real_seconds * SAMPLES_PER_SECOND)
+    
+    # Loop back to start if we exceed the length of the dataframe
+    if idx >= len(_df):
+        REAL_START_TIME = time.time()
+        return 0
+        
+    return idx
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper utilities
@@ -93,13 +95,15 @@ def get_status():
         if _df.empty:
             return {"error": "Data not available"}
 
-        sim_time = get_current_sim_time()
-        idx = get_current_idx(sim_time)
+        idx = get_current_idx()
+        sim_time = _df.iloc[idx]['timestamp']
         
         row = {k: _safe(v) for k, v in _df.iloc[idx].to_dict().items()}
         row['timestamp'] = str(sim_time) # Return the exact simulation time
         row['last_refreshed'] = str(pd.Timestamp.now())
         row['data_source'] = f"Aditya-L1 (6x Simulation Loop)"
+        row['current_idx'] = idx
+        row['total_rows'] = len(_df)
 
         # Event tracking
         classes = _df['PredictedClass'].values
@@ -182,15 +186,11 @@ def get_status():
 def get_history():
     try:
         if _df.empty: return []
-        sim_time = get_current_sim_time()
-        idx = get_current_idx(sim_time)
+        idx = get_current_idx()
         
-        cutoff_ts = sim_time - pd.Timedelta(hours=24)
-        cutoff_idx = _df['timestamp'].searchsorted(cutoff_ts, side='left')
-        cutoff_idx = max(0, min(cutoff_idx, idx))
-        
-        # Subsample to avoid huge payloads
-        hist_df = _df.iloc[cutoff_idx:idx+1:5] 
+        # 24 hours of simulated history = 288 samples at 5-minute cadence
+        start_idx = max(0, idx - 288 + 1)
+        hist_df = _df.iloc[start_idx:idx + 1] 
         
         records = []
         for r in hist_df.to_dict(orient="records"):
@@ -204,12 +204,10 @@ def get_history():
 def get_recent_flares():
     try:
         if _df.empty: return []
-        sim_time = get_current_sim_time()
-        idx = get_current_idx(sim_time)
+        idx = get_current_idx()
         
-        # Look back 7 days in simulation time
-        cutoff_ts = sim_time - pd.Timedelta(days=7)
-        cutoff_idx = _df['timestamp'].searchsorted(cutoff_ts, side='left')
+        # Look back 7 days in simulation time (2016 samples at 5-minute cadence)
+        cutoff_idx = max(0, idx - 2016)
         
         flare_df = _df.iloc[cutoff_idx:idx+1]
         flare_df = flare_df[flare_df['PredictedClass'] >= 1].copy()
@@ -236,10 +234,12 @@ def get_recent_flares():
 
 @app.get("/api/health")
 def health():
+    idx = get_current_idx()
+    sim_time = _df.iloc[idx]['timestamp'] if not _df.empty else pd.Timestamp.now()
     return {
         "status": "online",
         "mode": "6x Simulation",
-        "current_sim_time": str(get_current_sim_time()),
+        "current_sim_time": str(sim_time),
         "data_rows": len(_df)
     }
 
