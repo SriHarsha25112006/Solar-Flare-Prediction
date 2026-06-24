@@ -13,6 +13,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [showSoLEXS, setShowSoLEXS] = useState(true);
   const [showHEL1OS, setShowHEL1OS] = useState(true);
+  const [warpTime, setWarpTime] = useState('');
 
   const calculateDuration = () => {
     if (!status || !status.EventStart || status.EventStart === 'N/A') return 'N/A';
@@ -43,39 +44,51 @@ function App() {
     }
   };
 
+  const fetchData = async () => {
+    try {
+      const [statusRes, historyRes, recentRes] = await Promise.all([
+        axios.get(`${API_URL}/status`),
+        axios.get(`${API_URL}/history`),
+        axios.get(`${API_URL}/recent_flares`)
+      ]);
+      
+      setStatus(statusRes.data);
+      setRecentFlares(recentRes.data);
+      
+      // Ensure proper date objects for charts and formatted properly in IST
+      const formattedHistory = historyRes.data.map(item => {
+        const date = new Date(item.timestamp);
+        return {
+          time: date.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute:'2-digit'}),
+          fullDate: date.toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST',
+          SoLEXS: item.SoLEXS_COUNTS,
+          HEL1OS: item.HEL1OS_COUNTS
+        };
+      });
+      setHistory(formattedHistory);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTimeTravel = async () => {
+    if (!warpTime) return;
+    try {
+      // Convert datetime-local YYYY-MM-DDTHH:MM to YYYY-MM-DD HH:MM:00
+      const formattedTime = warpTime.replace('T', ' ') + ':00';
+      await axios.post(`${API_URL}/set_time?timestamp=${encodeURIComponent(formattedTime)}`);
+      setWarpTime(''); // Reset to track current simulation time
+      fetchData();
+    } catch (error) {
+      console.error("Error warping time:", error);
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
     
-    const fetchData = async () => {
-      try {
-        const [statusRes, historyRes, recentRes] = await Promise.all([
-          axios.get(`${API_URL}/status`),
-          axios.get(`${API_URL}/history`),
-          axios.get(`${API_URL}/recent_flares`)
-        ]);
-        
-        if (!isMounted) return;
-        setStatus(statusRes.data);
-        setRecentFlares(recentRes.data);
-        
-        // Ensure proper date objects for charts and formatted properly in IST
-        const formattedHistory = historyRes.data.map(item => {
-          const date = new Date(item.timestamp);
-          return {
-            time: date.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute:'2-digit'}),
-            fullDate: date.toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST',
-            SoLEXS: item.SoLEXS_COUNTS,
-            HEL1OS: item.HEL1OS_COUNTS
-          };
-        });
-        setHistory(formattedHistory);
-      } catch (error) {
-        console.error("Error fetching data:", error);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
     const fetchLoop = async () => {
       if (!isMounted) return;
       await fetchData();
@@ -184,9 +197,51 @@ function App() {
             </svg>
             SOLARFORGE ENGINE
           </h1>
-          <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
-            <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}, 0 0 24px ${currentColor}` }}></div>
-            SIMULATION RUNNING (10x) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
+            <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
+              <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}, 0 0 24px ${currentColor}` }}></div>
+              SIMULATION RUNNING (10x) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
+            </div>
+            
+            {/* Time Travel Input */}
+            <div className="time-travel-control" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(5, 5, 8, 0.6)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.08)', boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)' }}>
+              <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.5px' }}>WARP:</span>
+              <input 
+                type="datetime-local" 
+                value={warpTime || (status ? status.timestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00')}
+                onChange={(e) => setWarpTime(e.target.value)}
+                min="2024-02-01T00:00"
+                max="2024-02-07T23:55"
+                style={{ 
+                  background: 'transparent', 
+                  border: 'none', 
+                  color: '#fff', 
+                  fontFamily: 'var(--font-mono)', 
+                  fontSize: '0.75rem', 
+                  outline: 'none',
+                  cursor: 'pointer',
+                  width: '140px'
+                }} 
+              />
+              <button 
+                onClick={handleTimeTravel}
+                style={{ 
+                  background: currentColor, 
+                  color: '#000', 
+                  border: 'none', 
+                  padding: '0.2rem 0.6rem', 
+                  borderRadius: '4px', 
+                  fontSize: '0.72rem', 
+                  fontFamily: 'var(--font-mono)', 
+                  fontWeight: 'bold', 
+                  cursor: 'pointer',
+                  boxShadow: `0 0 8px ${currentColor}`,
+                  transition: 'all 0.3s ease'
+                }}
+              >
+                JUMP
+              </button>
+            </div>
           </div>
         </motion.header>
 
@@ -487,7 +542,7 @@ function App() {
               <div className="chart-header" style={{ marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
                   <div className="chart-title" style={{ color: currentColor }}>PROACTIVE MULTI-HORIZON RISK MATRIX</div>
-                  <span className="hud-tag" style={{ '--glow-color': 'var(--neon-green)' }}>AI-MODEL: XGB-V3.1</span>
+                  <span className="hud-tag" style={{ '--glow-color': 'var(--neon-green)' }}>AI-MODEL: RF-ENSEMBLE-V3.1</span>
                 </div>
               </div>
               <div className="forecast-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1.2rem', padding: '0.5rem 0' }}>

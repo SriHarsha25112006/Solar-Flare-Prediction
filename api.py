@@ -61,17 +61,19 @@ except Exception as e:
 
 # Time synchronization
 REAL_START_TIME = time.time()
+START_INDEX = 0
 
 def get_current_idx():
     """Calculates the current active index in the simulation based on elapsed time."""
-    global REAL_START_TIME
+    global REAL_START_TIME, START_INDEX
     if _df.empty: return 0
     elapsed_real_seconds = time.time() - REAL_START_TIME
-    idx = int(elapsed_real_seconds * SAMPLES_PER_SECOND)
+    idx = START_INDEX + int(elapsed_real_seconds * SAMPLES_PER_SECOND)
     
     # Loop back to start if we exceed the length of the dataframe
     if idx >= len(_df):
         REAL_START_TIME = time.time()
+        START_INDEX = 0
         return 0
         
     return idx
@@ -381,6 +383,32 @@ def get_recent_flares():
     except Exception as e:
         import traceback; traceback.print_exc()
         return {"error": str(e)}
+@app.post("/api/set_time")
+def set_time(timestamp: str):
+    global REAL_START_TIME, START_INDEX
+    try:
+        if _df.empty:
+            return {"status": "error", "message": "Telemetry dataset is empty"}
+        
+        target_dt = pd.to_datetime(timestamp)
+        # Calculate differences and find the index of the closest timestamp
+        diffs = (_df['timestamp'] - target_dt).abs()
+        closest_idx = int(diffs.idxmin())
+        
+        START_INDEX = closest_idx
+        REAL_START_TIME = time.time()
+        
+        new_time_str = str(_df.iloc[closest_idx]['timestamp'])
+        print(f"[SolarForge] Time travel request: {timestamp} -> Jumped to index {closest_idx} ({new_time_str})")
+        return {
+            "status": "success", 
+            "new_index": closest_idx, 
+            "timestamp": new_time_str
+        }
+    except Exception as e:
+        print(f"[SolarForge] Time travel error: {e}")
+        return {"status": "error", "message": str(e)}
+
 
 @app.get("/api/health")
 def health():
