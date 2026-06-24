@@ -121,9 +121,9 @@ def get_event_peak_counts(df, idx):
 def make_magnitude_val(model_cls: int, counts: float) -> str:
     """Build a magnitude string that is consistent with the predicted class."""
     if model_cls == 0: return 'NOMINAL'
-    if model_cls == 1: return f"C{max(1.0, min(counts/COUNTS_C_THRESH,  9.9)):.1f}"
-    if model_cls == 2: return f"M{max(1.0, min(counts/COUNTS_M_THRESH,  9.9)):.1f}"
-    return f"X{max(1.0, min(counts/COUNTS_X_THRESH, 9.9)):.1f}"
+    if model_cls == 1: return f"C{max(0.0, min(counts/COUNTS_C_THRESH,  9.9)):.1f}"
+    if model_cls == 2: return f"M{max(0.0, min(counts/COUNTS_M_THRESH,  9.9)):.1f}"
+    return f"X{max(0.0, min(counts/COUNTS_X_THRESH, 9.9)):.1f}"
 
 THRESHOLDS = {
     "15m": {"C": 0.0600, "M": 0.0100, "X": 0.0500},
