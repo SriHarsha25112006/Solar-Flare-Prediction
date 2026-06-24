@@ -86,11 +86,26 @@ def _safe(v):
     if isinstance(v, pd.Timestamp): return str(v)
     return v
 
-def make_magnitude_val(cls, counts):
-    if cls == 0: return 'NOMINAL'
-    if cls == 1: return f"C{min(counts/1000,  9.9):.1f}"
-    if cls == 2: return f"M{min(counts/5000,  9.9):.1f}"
-    return     f"X{min(counts/20000, 9.9):.1f}"
+# Count thresholds that define each GOES class boundary (counts/10s)
+COUNTS_C_THRESH  = 1000
+COUNTS_M_THRESH  = 5000
+COUNTS_X_THRESH  = 20000
+
+def counts_to_display_class(counts: float) -> int:
+    """Return the GOES class supported by the actual telemetry counts."""
+    if counts >= COUNTS_X_THRESH: return 3
+    if counts >= COUNTS_M_THRESH: return 2
+    if counts >= COUNTS_C_THRESH: return 1
+    return 0
+
+def make_magnitude_val(model_cls: int, counts: float) -> str:
+    """Build a magnitude string that is always physically consistent with counts."""
+    # Cap the displayed class to what the counts can actually support
+    display_cls = min(model_cls, counts_to_display_class(counts))
+    if display_cls == 0: return 'NOMINAL'
+    if display_cls == 1: return f"C{min(counts/COUNTS_C_THRESH,  9.9):.1f}"
+    if display_cls == 2: return f"M{min(counts/COUNTS_M_THRESH,  9.9):.1f}"
+    return f"X{min(counts/COUNTS_X_THRESH, 9.9):.1f}"
 
 THRESHOLDS = {
     "15m": {"C": 0.0600, "M": 0.0100, "X": 0.0500},
@@ -163,25 +178,33 @@ def get_status():
         row['current_idx'] = idx
         row['total_rows'] = len(_df)
         
-        # Override RiskLabel dynamically to ensure frontend gets correct C-CLASS/M-CLASS/X-CLASS
         risk_map_main = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
-        row['RiskLabel'] = risk_map_main.get(int(row['PredictedClass']), 'NOMINAL')
-        
-        # Synchronize main probabilities to line up with the predicted class
-        cls_main = int(row['PredictedClass'])
+        cls_model = int(row['PredictedClass'])  # what the ML model predicted
+
+        # Peak counts in the 15-minute lookahead window (3 samples at 5-min cadence)
+        peak_window_main = _df.iloc[idx : idx + 4]
+        peak_counts_main = float(peak_window_main['SoLEXS_COUNTS'].max())
+
+        # The DISPLAYED class is capped by what the telemetry physically supports.
+        # This prevents X-CLASS being shown when counts are ~0 at start of event.
+        display_cls = min(cls_model, counts_to_display_class(peak_counts_main))
+
+        # Override RiskLabel using the display class (telemetry-gated)
+        row['RiskLabel'] = risk_map_main.get(display_cls, 'NOMINAL')
+        row['PredictedClass'] = display_cls  # keep frontend consistent
+
+        # Magnitude is always physically meaningful
+        row['MagnitudeString'] = make_magnitude_val(cls_model, peak_counts_main)
+
+        # Synchronize probability matrix to match the display class
         nom, c, m, x = synchronize_probs(
             float(row['CProb']), float(row['MProb']), float(row['XProb']),
-            cls_main, 0.0600, 0.0100, 0.0500
+            display_cls, 0.0600, 0.0100, 0.0500
         )
         row['CProb'] = c
         row['MProb'] = m
         row['XProb'] = x
         row['SafeProb'] = nom
-
-        # Override MagnitudeString dynamically based on the peak counts in the 15-minute lookahead window
-        peak_window_main = _df.iloc[idx : idx + 4] # 15 minutes is 3 samples (5-minute cadence)
-        peak_counts_main = float(peak_window_main['SoLEXS_COUNTS'].max())
-        row['MagnitudeString'] = make_magnitude_val(cls_main, peak_counts_main)
 
         # Calculate WattsPerSqMeter dynamically from SoLEXS_COUNTS (approx. 5e-9 W/m² per count)
         counts = float(row.get('SoLEXS_COUNTS', 0.0))
@@ -231,23 +254,26 @@ def get_status():
                     x_prob = float(_df.iloc[idx][f"XProb_{h}"])
                     cls = int(_df.iloc[idx][f"PredClass_{h}"])
                     
-                    # Synchronize the forecast probabilities
-                    tc = THRESHOLDS[h]["C"]
-                    tm = THRESHOLDS[h]["M"]
-                    tx = THRESHOLDS[h]["X"]
-                    nom_s, c_s, m_s, x_s = synchronize_probs(c_prob, m_prob, x_prob, cls, tc, tm, tx)
-                    
                     # Look ahead to find the peak count within this horizon window
                     offset = offset_map[h]
                     future_window = _df.iloc[idx : idx + offset + 1]
                     future_counts = float(future_window["SoLEXS_COUNTS"].max())
+
+                    # Gate displayed class on what future counts physically support
+                    display_cls_h = min(cls, counts_to_display_class(future_counts))
+
+                    # Synchronize the forecast probabilities using the gated class
+                    tc = THRESHOLDS[h]["C"]
+                    tm = THRESHOLDS[h]["M"]
+                    tx = THRESHOLDS[h]["X"]
+                    nom_s, c_s, m_s, x_s = synchronize_probs(c_prob, m_prob, x_prob, display_cls_h, tc, tm, tx)
 
                     future_forecasts[h] = {
                         "CProb": c_s,
                         "MProb": m_s,
                         "XProb": x_s,
                         "SafeProb": nom_s,
-                        "RiskLabel": risk_map[cls],
+                        "RiskLabel": risk_map[display_cls_h],
                         "MagnitudeString": make_magnitude_val(cls, future_counts)
                     }
                 row['FutureForecasts'] = future_forecasts
@@ -283,22 +309,27 @@ def get_history():
         records = []
         for i, r in zip(hist_df.index, hist_df.to_dict(orient="records")):
             # Compute lookahead peak counts for this historical sample
-            cls = int(r['PredictedClass'])
+            cls_model_h = int(r['PredictedClass'])
             peak_window = _df.iloc[i : i + 4] # 15 min lookahead (3 steps)
             peak_counts = float(peak_window['SoLEXS_COUNTS'].max())
             
-            # Synchronize historical probabilities to match the prediction
+            # Gate class on actual counts
+            display_cls_h = min(cls_model_h, counts_to_display_class(peak_counts))
+
+            # Synchronize historical probabilities to match the gated display class
             nom_s, c_s, m_s, x_s = synchronize_probs(
                 float(r['CProb']), float(r['MProb']), float(r['XProb']),
-                cls, 0.0600, 0.0100, 0.0500
+                display_cls_h, 0.0600, 0.0100, 0.0500
             )
             
-            # Override fields
+            risk_map_h = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
             r_safe = {k: _safe(v) for k, v in r.items()}
+            r_safe['PredictedClass'] = display_cls_h
+            r_safe['RiskLabel'] = risk_map_h[display_cls_h]
             r_safe['CProb'] = c_s
             r_safe['MProb'] = m_s
             r_safe['XProb'] = x_s
-            r_safe['MagnitudeString'] = make_magnitude_val(cls, peak_counts)
+            r_safe['MagnitudeString'] = make_magnitude_val(cls_model_h, peak_counts)
             records.append(r_safe)
         return records
     except Exception as e:
@@ -324,14 +355,18 @@ def get_recent_flares():
 
         events = []
         for _, grp in flare_df.groupby('window_id'):
-            cls = int(grp['PredictedClass'].max())
-            # Calculate the magnitude based on the actual peak counts achieved during the event
+            cls_model_e = int(grp['PredictedClass'].max())
+            # Gate class by the actual peak counts achieved during the event
             peak_counts = float(grp['SoLEXS_COUNTS'].max())
-            mag = make_magnitude_val(cls, peak_counts)
+            display_cls_e = min(cls_model_e, counts_to_display_class(peak_counts))
+            # Skip events where counts don't even reach C-class level
+            if display_cls_e == 0:
+                continue
+            mag = make_magnitude_val(cls_model_e, peak_counts)
             events.append({
                 "start": str(grp['timestamp'].min()),
                 "end": str(grp['timestamp'].max()),
-                "class_level": cls,
+                "class_level": display_cls_e,
                 "magnitude": mag
             })
         return events[-10:]
