@@ -112,7 +112,14 @@ function App() {
   const [bookmarks, setBookmarks] = useState(() => {
     try {
       const saved = localStorage.getItem('solarforge_bookmarks');
-      return saved ? JSON.parse(saved) : [];
+      if (saved) return JSON.parse(saved);
+      return [
+        { name: "1. Massive X-Class Peak", timestamp: "2024-05-11 09:30:00" },
+        { name: "2. Historic X-Class Event", timestamp: "2024-05-09 17:30:00" },
+        { name: "3. Major X-Class Flare", timestamp: "2024-02-07 13:30:00" },
+        { name: "4. Severe X-Class Threat", timestamp: "2024-05-04 15:00:00" },
+        { name: "5. Extreme X-Class Spike", timestamp: "2024-05-14 10:00:00" }
+      ];
     } catch {
       return [];
     }
@@ -193,7 +200,7 @@ function App() {
     const timeToWarp = targetTime || manualWarpTime;
     if (!timeToWarp) return;
     try {
-      setLoading(true);
+      // setLoading(true); removed to prevent UI flash
       // Format to YYYY-MM-DD HH:MM:00
       const formattedTime = timeToWarp.replace('T', ' ').slice(0, 19);
       const queryTime = formattedTime.includes(':') && formattedTime.length === 16 ? formattedTime + ':00' : formattedTime;
@@ -214,7 +221,7 @@ function App() {
 
   const handleSetSpeed = async (speedVal) => {
     try {
-      setLoading(true);
+      // setLoading(true); removed to prevent UI flash
       await axios.post(`${API_URL}/set_speed?speed=${speedVal}`);
       await fetchData();
     } catch (err) {
