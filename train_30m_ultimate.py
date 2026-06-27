@@ -41,11 +41,11 @@ FEATURE_COLS_X = [
 ]
 
 def get_best_tss_binary(y_true, y_probs, class_name="Class"):
-    best_tss = -1.0
-    best_thresh = 0.0
+    best_score = -1.0
+    best_thresh = 0.5
     best_stats = {}
     
-    thresholds = np.concatenate([np.arange(0.001, 0.01, 0.001), np.arange(0.01, 0.9, 0.01)])
+    thresholds = np.arange(0.05, 0.9, 0.02)
     for thresh in thresholds:
         pred = (y_probs >= thresh)
         tp = np.sum(y_true & pred)
@@ -54,14 +54,21 @@ def get_best_tss_binary(y_true, y_probs, class_name="Class"):
         tn = np.sum(~y_true & ~pred)
         tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
         fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+        
+        # F1 Score is fantastic for highly imbalanced datasets.
+        f1 = (2 * tp) / (2 * tp + fp + fn) if (2 * tp + fp + fn) > 0 else 0
         tss = tpr - fpr
-        if tss > best_tss:
-            best_tss = tss
+        
+        # Score function: Primary focus on F1, but TSS acts as a tie-breaker/bonus
+        score = f1 + (tss * 0.1)
+        
+        if score > best_score:
+            best_score = score
             best_thresh = thresh
-            best_stats = {'TP': tp, 'FP': fp, 'TN': tn, 'FN': fn, 'TPR': tpr, 'FPR': fpr}
+            best_stats = {'TP': tp, 'FP': fp, 'TN': tn, 'FN': fn, 'TPR': tpr, 'FPR': fpr, 'F1': f1}
             
-    print(f"    --> {class_name} Best Thresh: {best_thresh:.4f} | TSS: {best_tss:.4f} | TPR: {best_stats['TPR']:.4f} | FPR: {best_stats['FPR']:.4f} (TP={best_stats['TP']}, FP={best_stats['FP']})")
-    return best_tss, best_thresh
+    print(f"    --> {class_name} Best Thresh: {best_thresh:.4f} | F1: {best_stats.get('F1', 0):.4f} | TPR: {best_stats.get('TPR',0):.4f} | FPR: {best_stats.get('FPR',0):.4f} (TP={best_stats.get('TP',0)}, FP={best_stats.get('FP',0)})")
+    return best_score, best_thresh
 
 def main():
     print("============================================================")
@@ -159,7 +166,7 @@ def main():
 
     # For 30m horizon, pre-flare calm index may be even more pronounced, max_depth=4 is highly generalized
     print("    --> Training X-Class Model (max_depth=4)...")
-    clf_X = RandomForestClassifier(n_estimators=150, max_depth=4, n_jobs=-1, class_weight='balanced', random_state=42)
+    clf_X = RandomForestClassifier(n_estimators=150, max_depth=6, min_samples_leaf=15, n_jobs=-1, class_weight='balanced', random_state=42)
     clf_X.fit(X_X_res, y_X_res_X)
 
     # -------------------------------------------------------------------------
