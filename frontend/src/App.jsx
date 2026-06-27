@@ -47,7 +47,7 @@ function App() {
   // Decoupled time warp inputs
   const [manualWarpTime, setManualWarpTime] = useState('');
   const [manualWarpText, setManualWarpText] = useState('');
-  const [hasInitializedWarp, setHasInitializedWarp] = useState(false);
+  const hasInitializedWarpRef = useRef(false);
   
   // Audio state
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -160,10 +160,10 @@ function App() {
       setStatus(statusData);
       
       // Initialize date inputs once when first loaded
-      if (statusData && statusData.timestamp && !hasInitializedWarp) {
+      if (statusData && statusData.timestamp && !hasInitializedWarpRef.current) {
         setManualWarpTime(statusData.timestamp.replace(' ', 'T').slice(0, 16));
         setManualWarpText(statusData.timestamp);
-        setHasInitializedWarp(true);
+        hasInitializedWarpRef.current = true;
       }
       
       const safeRecentFlares = Array.isArray(recentRes.data) ? recentRes.data : [];
@@ -187,7 +187,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [hasInitializedWarp]);
+  }, []);
 
   const handleTimeTravel = async (targetTime) => {
     const timeToWarp = targetTime || manualWarpTime;
@@ -345,7 +345,7 @@ function App() {
     return (
       <div className="loading">
         <div className="spinner"></div>
-        <h2>{status && status.error ? "ERROR: " + status.error : "INITIALIZING SOLARFORGE V2..."}</h2>
+        <h2>{status && status.error ? "ERROR: " + status.error : "INITIALIZING SOLARFORGE..."}</h2>
       </div>
     );
   }
