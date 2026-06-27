@@ -2,6 +2,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { motion } from 'framer-motion';
+
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Filler, Legend
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, ChartTooltip, Filler, Legend);
+
 import './index.css';
 
 
@@ -10,7 +18,46 @@ const CustomTooltip = ({ active, payload, label, history, currentColor }) => {
     const item = history.find(h => h.time === label);
     const fullDate = item ? item.fullDate : label;
     
-    return (
+    
+  const chartData = {
+    labels: history.map(h => h.time),
+    datasets: [
+      showSoLEXS ? {
+        label: 'SoLEXS (cps)',
+        data: history.map(h => h.SoLEXS),
+        borderColor: '#ff3366',
+        backgroundColor: 'rgba(255, 51, 102, 0.2)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHitRadius: 10
+      } : null,
+      showHEL1OS ? {
+        label: 'HEL1OS (cps)',
+        data: history.map(h => h.HEL1OS),
+        borderColor: '#33ccff',
+        backgroundColor: 'rgba(51, 204, 255, 0.2)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHitRadius: 10
+      } : null
+    ].filter(Boolean)
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } },
+      y: { type: 'logarithmic', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }
+    },
+    plugins: { legend: { display: false } },
+    interaction: { mode: 'index', intersect: false }
+  };
+
+  return (
       <div 
         className="hud-tooltip" 
         style={{ 
@@ -63,6 +110,19 @@ function App() {
   const prevRiskRef = useRef('');
 
   useEffect(() => {
+    if (status && status.RiskLabel) {
+      if (status.RiskLabel === 'X-CLASS' && prevRiskRef.current !== 'X-CLASS') {
+        playConsoleSound('siren');
+        document.body.classList.add('red-alert');
+      } else if (status.RiskLabel !== 'X-CLASS') {
+        document.body.classList.remove('red-alert');
+      }
+      prevRiskRef.current = status.RiskLabel;
+    }
+  }, [status]);
+
+
+  useEffect(() => {
     try {
       localStorage.setItem('solarforge_sound_enabled', JSON.stringify(soundEnabled));
     } catch (e) {
@@ -95,6 +155,16 @@ function App() {
         gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.08);
         osc.start();
         osc.stop(audioCtx.currentTime + 0.08);
+
+      } else if (type === 'siren') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+        osc.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.4);
+        osc.frequency.linearRampToValueAtTime(400, audioCtx.currentTime + 0.8);
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.8);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.8);
       } else if (type === 'warp') {
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(180, audioCtx.currentTime);
@@ -126,6 +196,21 @@ function App() {
     }
   });
   const [bookmarkLabel, setBookmarkLabel] = useState('');
+
+  
+  const exportCSV = () => {
+    if (!history || history.length === 0) return;
+    const header = "Time,SoLEXS,HEL1OS\n";
+    const csvContent = history.map(row => `${row.fullDate},${row.SoLEXS},${row.HEL1OS}`).join("\n");
+    const blob = new Blob([header + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `solarforge_export_${status?.timestamp?.replace(/[: ]/g, '_') || 'data'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const calculateDuration = () => {
     if (!status || !status.EventStart || status.EventStart === 'N/A') return 'N/A';

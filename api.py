@@ -9,7 +9,9 @@ import time
 import warnings
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import asyncio
+import json
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -144,12 +146,12 @@ def get_event_peak_counts(df, idx):
     window = df.iloc[start_i : end_i + 1]
     return float(window['SoLEXS_COUNTS'].max())
 
-def make_magnitude_val(model_cls: int, counts: float) -> str:
-    """Build a magnitude string that is consistent with the predicted class."""
+def make_magnitude_val(model_cls: int, c_prob: float, m_prob: float, x_prob: float) -> str:
+    """Build a magnitude string that is consistent with the predicted class probabilities."""
     if model_cls == 0: return 'NOMINAL'
-    if model_cls == 1: return f"C{max(0.0, min(counts/COUNTS_C_THRESH,  9.9)):.1f}"
-    if model_cls == 2: return f"M{max(0.0, min(counts/COUNTS_M_THRESH,  9.9)):.1f}"
-    return f"X{max(0.0, min(counts/COUNTS_X_THRESH, 9.9)):.1f}"
+    if model_cls == 1: return f"C{max(1.0, min(9.9, (c_prob / 0.25) * 3.0)):.1f}"
+    if model_cls == 2: return f"M{max(1.0, min(9.9, (m_prob / 0.10) * 3.0)):.1f}"
+    return f"X{max(1.0, min(9.9, (x_prob / 0.55) * 1.5)):.1f}"
 
 THRESHOLDS = {
     "15m": {"C": 0.0600, "M": 0.0100, "X": 0.0500},
@@ -246,7 +248,7 @@ def get_status():
         row['PredictedClass'] = cls_model
 
         # Magnitude matches the model class and event peak counts
-        row['MagnitudeString'] = make_magnitude_val(cls_model, peak_counts_main)
+        row['MagnitudeString'] = make_magnitude_val(cls_model, row['CProb'], row['MProb'], row['XProb'])
         
         # Override raw column with event peak counts to make Peak Intensity UI work
         row['EstimatedPeakCounts'] = peak_counts_main
@@ -326,7 +328,7 @@ def get_status():
                         "XProb": x_s,
                         "SafeProb": nom_s,
                         "RiskLabel": risk_map[cls],
-                        "MagnitudeString": make_magnitude_val(cls, peak_counts_h)
+                        "MagnitudeString": make_magnitude_val(cls, row[f"CProb_{h}"], row[f"MProb_{h}"], row[f"XProb_{h}"])
                     }
                 row['FutureForecasts'] = future_forecasts
             except Exception as e:
@@ -375,7 +377,7 @@ def compute_history(idx):
         r_safe['CProb'] = c_s
         r_safe['MProb'] = m_s
         r_safe['XProb'] = x_s
-        r_safe['MagnitudeString'] = make_magnitude_val(cls_model_h, peak_counts)
+        r_safe['MagnitudeString'] = make_magnitude_val(cls_model_h, r_safe[f"CProb_{h}"], r_safe[f"MProb_{h}"], r_safe[f"XProb_{h}"])
         records.append(r_safe)
     return records
 
@@ -406,7 +408,7 @@ def compute_recent_flares(idx):
     for _, grp in flare_df.groupby('window_id'):
         cls = int(grp['PredictedClass'].max())
         peak_counts = float(grp['SoLEXS_COUNTS'].max())
-        mag = make_magnitude_val(cls, peak_counts)
+        mag = make_magnitude_val(cls, grp["CProb"].max(), grp["MProb"].max(), grp["XProb"].max())
         events.append({
             "start": str(grp['timestamp'].min()),
             "end": str(grp['timestamp'].max()),
