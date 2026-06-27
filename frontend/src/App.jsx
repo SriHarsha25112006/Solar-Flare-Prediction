@@ -18,46 +18,7 @@ const CustomTooltip = ({ active, payload, label, history, currentColor }) => {
     const item = history.find(h => h.time === label);
     const fullDate = item ? item.fullDate : label;
     
-    
-  const chartData = {
-    labels: history.map(h => h.time),
-    datasets: [
-      showSoLEXS ? {
-        label: 'SoLEXS (cps)',
-        data: history.map(h => h.SoLEXS),
-        borderColor: '#ff3366',
-        backgroundColor: 'rgba(255, 51, 102, 0.2)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 0,
-        pointHitRadius: 10
-      } : null,
-      showHEL1OS ? {
-        label: 'HEL1OS (cps)',
-        data: history.map(h => h.HEL1OS),
-        borderColor: '#33ccff',
-        backgroundColor: 'rgba(51, 204, 255, 0.2)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 0,
-        pointHitRadius: 10
-      } : null
-    ].filter(Boolean)
-  };
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-    scales: {
-      x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } },
-      y: { type: 'logarithmic', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }
-    },
-    plugins: { legend: { display: false } },
-    interaction: { mode: 'index', intersect: false }
-  };
-
-  return (
+    return (
       <div 
         className="hud-tooltip" 
         style={{ 
@@ -368,9 +329,10 @@ function App() {
     }
   }, [soundEnabled]);
 
+  
+  const wsRef = useRef(null);
   useEffect(() => {
     let isMounted = true;
-    
     const fetchPresets = async () => {
       try {
         const res = await axios.get(`${API_URL}/warp_presets`);
@@ -381,18 +343,45 @@ function App() {
         console.error("Error fetching presets:", err);
       }
     };
-    
     fetchPresets();
     
-    const fetchLoop = async () => {
-      if (!isMounted) return;
-      await fetchData();
-      if (isMounted) setTimeout(fetchLoop, 2000); // 2s loop
+    fetchData();
+    const wsUrl = window.location.hostname === 'localhost' 
+      ? 'ws://localhost:8000/ws/telemetry' 
+      : `wss://${window.location.hostname}/ws/telemetry`;
+    wsRef.current = new WebSocket(wsUrl);
+    wsRef.current.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'telemetry') {
+          setStatus(payload.status);
+          if (payload.status && payload.status.timestamp && !hasInitializedWarpRef.current) {
+            setManualWarpTime(payload.status.timestamp.replace(' ', 'T').slice(0, 16));
+            setManualWarpText(payload.status.timestamp);
+            hasInitializedWarpRef.current = true;
+          }
+          setRecentFlares(Array.isArray(payload.recent_flares) ? payload.recent_flares : []);
+          const safeHistory = Array.isArray(payload.history) ? payload.history : [];
+          const formattedHistory = safeHistory.map(item => {
+            const date = new Date(item.timestamp.replace(' ', 'T') + 'Z');
+            return {
+              time: date.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute:'2-digit'}),
+              fullDate: date.toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST',
+              SoLEXS: item.SoLEXS_COUNTS,
+              HEL1OS: item.HEL1OS_COUNTS
+            };
+          });
+          setHistory(formattedHistory);
+          setLoading(false);
+        }
+      } catch (e) {}
     };
-    
-    fetchLoop();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+      if (wsRef.current) wsRef.current.close();
+    };
   }, [fetchData]);
+
 
   useEffect(() => {
     if (status && status.RiskLabel === 'X-CLASS') {
@@ -485,6 +474,45 @@ function App() {
     } catch {
       return dateString;
     }
+  };
+
+
+  const chartData = {
+    labels: history.map(h => h.time),
+    datasets: [
+      showSoLEXS ? {
+        label: 'SoLEXS (cps)',
+        data: history.map(h => h.SoLEXS),
+        borderColor: '#ff3366',
+        backgroundColor: 'rgba(255, 51, 102, 0.2)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHitRadius: 10
+      } : null,
+      showHEL1OS ? {
+        label: 'HEL1OS (cps)',
+        data: history.map(h => h.HEL1OS),
+        borderColor: '#33ccff',
+        backgroundColor: 'rgba(51, 204, 255, 0.2)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHitRadius: 10
+      } : null
+    ].filter(Boolean)
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } },
+      y: { type: 'logarithmic', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }
+    },
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    interaction: { mode: 'index', intersect: false }
   };
 
   return (
@@ -672,6 +700,15 @@ function App() {
 
                   {/* Action buttons */}
                   <div className="warp-action-buttons" style={{ display: 'flex', gap: '0.4rem', marginTop: '0.2rem' }}>
+
+                    <button 
+                      className="warp-btn" 
+                      onClick={exportCSV}
+                      style={{ '--glow-color': currentColor, flexGrow: 1, background: 'rgba(255, 255, 255, 0.1)' }}
+                    >
+                      Export CSV
+                    </button>
+
                     <button 
                       className="warp-btn warp-btn-primary" 
                       onClick={() => {
