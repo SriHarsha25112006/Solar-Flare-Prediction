@@ -9,3 +9,4 @@ scipy
 pyarrow
 numpy
 joblib
+websockets
