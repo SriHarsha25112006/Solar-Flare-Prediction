@@ -2,14 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { motion } from 'framer-motion';
-
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Filler, Legend
-} from 'chart.js';
-import { Line } from 'react-chartjs-2';
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, ChartTooltip, Filler, Legend);
-
 import './index.css';
 
 
@@ -68,6 +60,16 @@ function App() {
     }
   });
 
+  const prevRiskRef = useRef('');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('solarforge_sound_enabled', JSON.stringify(soundEnabled));
+    } catch (e) {
+      console.warn("localStorage write blocked:", e);
+    }
+  }, [soundEnabled]);
+
   const playConsoleSound = (type) => {
     if (!soundEnabled) return;
     try {
@@ -93,16 +95,6 @@ function App() {
         gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.08);
         osc.start();
         osc.stop(audioCtx.currentTime + 0.08);
-
-      } else if (type === 'siren') {
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(400, audioCtx.currentTime);
-        osc.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.4);
-        osc.frequency.linearRampToValueAtTime(400, audioCtx.currentTime + 0.8);
-        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.8);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.8);
       } else if (type === 'warp') {
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(180, audioCtx.currentTime);
@@ -116,30 +108,6 @@ function App() {
       console.warn("Audio error:", e);
     }
   };
-
-  const prevRiskRef = useRef('');
-
-  useEffect(() => {
-    if (status && status.RiskLabel) {
-      if (status.RiskLabel === 'X-CLASS' && prevRiskRef.current !== 'X-CLASS') {
-        playConsoleSound('siren');
-        document.body.classList.add('red-alert');
-      } else if (status.RiskLabel !== 'X-CLASS') {
-        document.body.classList.remove('red-alert');
-      }
-      prevRiskRef.current = status.RiskLabel;
-    }
-  }, [status]);
-
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('solarforge_sound_enabled', JSON.stringify(soundEnabled));
-    } catch (e) {
-      console.warn("localStorage write blocked:", e);
-    }
-  }, [soundEnabled]);
-
 
   const [warpPresets, setWarpPresets] = useState([]);
   const [bookmarks, setBookmarks] = useState(() => {
@@ -159,7 +127,6 @@ function App() {
   });
   const [bookmarkLabel, setBookmarkLabel] = useState('');
 
-  
   const exportCSV = () => {
     if (!history || history.length === 0) return;
     const header = "Time,SoLEXS,HEL1OS\n";
@@ -330,10 +297,9 @@ function App() {
     }
   }, [soundEnabled]);
 
-  
-  const wsRef = useRef(null);
   useEffect(() => {
     let isMounted = true;
+    
     const fetchPresets = async () => {
       try {
         const res = await axios.get(`${API_URL}/warp_presets`);
@@ -344,45 +310,18 @@ function App() {
         console.error("Error fetching presets:", err);
       }
     };
+    
     fetchPresets();
     
-    fetchData();
-    const wsUrl = window.location.hostname === 'localhost' 
-      ? 'ws://localhost:8000/ws/telemetry' 
-      : `wss://${window.location.hostname}/ws/telemetry`;
-    wsRef.current = new WebSocket(wsUrl);
-    wsRef.current.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'telemetry') {
-          setStatus(payload.status);
-          if (payload.status && payload.status.timestamp && !hasInitializedWarpRef.current) {
-            setManualWarpTime(payload.status.timestamp.replace(' ', 'T').slice(0, 16));
-            setManualWarpText(payload.status.timestamp);
-            hasInitializedWarpRef.current = true;
-          }
-          setRecentFlares(Array.isArray(payload.recent_flares) ? payload.recent_flares : []);
-          const safeHistory = Array.isArray(payload.history) ? payload.history : [];
-          const formattedHistory = safeHistory.map(item => {
-            const date = new Date(item.timestamp.replace(' ', 'T') + 'Z');
-            return {
-              time: date.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute:'2-digit'}),
-              fullDate: date.toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST',
-              SoLEXS: item.SoLEXS_COUNTS,
-              HEL1OS: item.HEL1OS_COUNTS
-            };
-          });
-          setHistory(formattedHistory);
-          setLoading(false);
-        }
-      } catch (e) {}
+    const fetchLoop = async () => {
+      if (!isMounted) return;
+      await fetchData();
+      if (isMounted) setTimeout(fetchLoop, 2000); // 2s loop
     };
-    return () => {
-      isMounted = false;
-      if (wsRef.current) wsRef.current.close();
-    };
+    
+    fetchLoop();
+    return () => { isMounted = false; };
   }, [fetchData]);
-
 
   useEffect(() => {
     if (status && status.RiskLabel === 'X-CLASS') {
@@ -402,12 +341,17 @@ function App() {
       if (soundEnabled && prevRisk) {
         let message = "";
         if (status.RiskLabel === 'X-CLASS') {
+          playConsoleSound('siren');
+          document.body.classList.add('red-alert');
           message = "Warning! Catastrophic X-class solar flare initiation detected. Grid and satellite threats active.";
         } else if (status.RiskLabel === 'M-CLASS') {
+          document.body.classList.remove('red-alert');
           message = "Alert. High risk M-class solar flare detected. Degraded radio communications likely.";
         } else if (status.RiskLabel === 'C-CLASS') {
+          document.body.classList.remove('red-alert');
           message = "Moderate risk C-class solar flare activity detected.";
         } else if (status.RiskLabel === 'NOMINAL' && prevRisk !== 'NOMINAL') {
+          document.body.classList.remove('red-alert');
           message = "Solar telemetry returned to nominal state.";
         }
         if (message) {
@@ -475,45 +419,6 @@ function App() {
     } catch {
       return dateString;
     }
-  };
-
-
-  const chartData = {
-    labels: history.map(h => h.time),
-    datasets: [
-      showSoLEXS ? {
-        label: 'SoLEXS (cps)',
-        data: history.map(h => h.SoLEXS),
-        borderColor: '#ff3366',
-        backgroundColor: 'rgba(255, 51, 102, 0.2)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 0,
-        pointHitRadius: 10
-      } : null,
-      showHEL1OS ? {
-        label: 'HEL1OS (cps)',
-        data: history.map(h => h.HEL1OS),
-        borderColor: '#33ccff',
-        backgroundColor: 'rgba(51, 204, 255, 0.2)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 0,
-        pointHitRadius: 10
-      } : null
-    ].filter(Boolean)
-  };
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-    scales: {
-      x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } },
-      y: { type: 'logarithmic', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } }
-    },
-    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
-    interaction: { mode: 'index', intersect: false }
   };
 
   return (
@@ -1237,7 +1142,46 @@ function App() {
               </div>
               
               <div style={{ height: '280px', width: '100%', marginTop: '1rem' }}>
-                <Line data={chartData} options={chartOptions} />
+                <ResponsiveContainer>
+                  <AreaChart data={history} margin={{ top: 15, right: 0, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorSoLEXS" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#00d2ff" stopOpacity={0.8}/>
+                        <stop offset="95%" stopColor="#00d2ff" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorHEL1OS" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ff2a2a" stopOpacity={0.8}/>
+                        <stop offset="95%" stopColor="#ff2a2a" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="time" stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} minTickGap={40} />
+                    <YAxis stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} />
+                    <Tooltip 
+                      content={<CustomTooltip history={history} currentColor={currentColor} />} 
+                      isAnimationActive={false} 
+                      cursor={{ stroke: 'rgba(255, 255, 255, 0.12)', strokeWidth: 1 }} 
+                    />
+                    
+                    {/* Alert Threshold Line */}
+                    <ReferenceLine 
+                      y={200} 
+                      stroke="#ff2a2a" 
+                      strokeDasharray="4 4" 
+                      strokeOpacity={0.5} 
+                      label={{ 
+                        value: 'ALERT THRESHOLD (200 cps)', 
+                        fill: '#ff2a2a', 
+                        fontSize: 10, 
+                        fontFamily: 'var(--font-mono)', 
+                        position: 'top',
+                        dy: -4
+                      }} 
+                    />
+                    
+                    {showSoLEXS && <Area type="monotone" dataKey="SoLEXS" stroke="#00d2ff" strokeWidth={2} fillOpacity={1} fill="url(#colorSoLEXS)" />}
+                    {showHEL1OS && <Area type="monotone" dataKey="HEL1OS" stroke="#ff2a2a" strokeWidth={2} fillOpacity={1} fill="url(#colorHEL1OS)" />}
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
             </motion.div>
           </div>
