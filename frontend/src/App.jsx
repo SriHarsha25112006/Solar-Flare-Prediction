@@ -1,8 +1,38 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import './index.css';
+
+
+const CustomTooltip = ({ active, payload, label, history, currentColor }) => {
+  if (active && payload && payload.length) {
+    const item = history.find(h => h.time === label);
+    const fullDate = item ? item.fullDate : label;
+    
+    return (
+      <div 
+        className="hud-tooltip" 
+        style={{ 
+          '--tooltip-border': currentColor,
+          '--tooltip-glow': currentColor,
+          borderColor: currentColor
+        }}
+      >
+        <div className="hud-tooltip-title">{fullDate}</div>
+        {payload.map((entry, index) => (
+          <div key={index} className="hud-tooltip-row" style={{ color: entry.color }}>
+            <span className="hud-tooltip-label">{entry.name}</span>
+            <span className="hud-tooltip-value">
+              {entry.value.toFixed(1)} <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>cps</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
 
 const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : '/api';
 
@@ -118,7 +148,7 @@ function App() {
     }
   };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [statusRes, historyRes, recentRes] = await Promise.all([
         axios.get(`${API_URL}/status`),
@@ -157,7 +187,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [hasInitializedWarp]);
 
   const handleTimeTravel = async (targetTime) => {
     const timeToWarp = targetTime || manualWarpTime;
@@ -211,7 +241,7 @@ function App() {
     localStorage.setItem('solarforge_bookmarks', JSON.stringify(newB));
   };
 
-  const playAlarmSound = () => {
+  const playAlarmSound = useCallback(() => {
     if (!soundEnabled) return;
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -243,7 +273,7 @@ function App() {
     } catch (e) {
       console.warn("AudioContext block:", e);
     }
-  };
+  }, [soundEnabled]);
 
   useEffect(() => {
     let isMounted = true;
@@ -269,7 +299,7 @@ function App() {
     
     fetchLoop();
     return () => { isMounted = false; };
-  }, []);
+  }, [fetchData]);
 
   useEffect(() => {
     if (status && status.RiskLabel === 'X-CLASS') {
@@ -277,7 +307,7 @@ function App() {
       const alarmInterval = setInterval(playAlarmSound, 5000);
       return () => clearInterval(alarmInterval);
     }
-  }, [status ? status.RiskLabel : null, soundEnabled]);
+  }, [status, soundEnabled, playAlarmSound]);
 
   // Voice Announcer TTS Alert effect
   useEffect(() => {
@@ -309,7 +339,7 @@ function App() {
         }
       }
     }
-  }, [status ? status.RiskLabel : null, soundEnabled]);
+  }, [status, soundEnabled, playAlarmSound]);
 
   if (loading || !status || status.error) {
     return (
@@ -329,35 +359,7 @@ function App() {
   
   const currentColor = classColors[status.RiskLabel] || classColors['NOMINAL'];
 
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      // Find full date from history array matching the label time
-      const item = history.find(h => h.time === label);
-      const fullDate = item ? item.fullDate : label;
-      
-      return (
-        <div 
-          className="hud-tooltip" 
-          style={{ 
-            '--tooltip-border': currentColor,
-            '--tooltip-glow': currentColor,
-            borderColor: currentColor
-          }}
-        >
-          <div className="hud-tooltip-title">{fullDate}</div>
-          {payload.map((entry, index) => (
-            <div key={index} className="hud-tooltip-row" style={{ color: entry.color }}>
-              <span className="hud-tooltip-label">{entry.name}</span>
-              <span className="hud-tooltip-value">
-                {entry.value.toFixed(1)} <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>cps</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      );
-    }
-    return null;
-  };
+  // CustomTooltip extracted
 
   // Animation variants
   const containerVars = {
@@ -790,7 +792,7 @@ function App() {
                               gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
                               osc.start();
                               osc.stop(audioCtx.currentTime + 0.1);
-                            } catch (e) {}
+                            } catch (err) { console.warn(err); }
                           }, 50);
                         }
                       }} 
@@ -1119,7 +1121,7 @@ function App() {
                     <XAxis dataKey="time" stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} minTickGap={40} />
                     <YAxis stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} />
                     <Tooltip 
-                      content={<CustomTooltip />} 
+                      content={<CustomTooltip history={history} currentColor={currentColor} />} 
                       isAnimationActive={false} 
                       cursor={{ stroke: 'rgba(255, 255, 255, 0.12)', strokeWidth: 1 }} 
                     />
