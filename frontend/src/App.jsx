@@ -7,6 +7,13 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Filler, Legend
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, ChartTooltip, Filler, Legend);
+
+
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip as ChartTooltip, Filler, Legend
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, ChartTooltip, Filler, Legend);
 
@@ -159,6 +166,21 @@ function App() {
   const [bookmarkLabel, setBookmarkLabel] = useState('');
 
   
+  const exportCSV = () => {
+    if (!history || history.length === 0) return;
+    const header = "Time,SoLEXS,HEL1OS\n";
+    const csvContent = history.map(row => `${row.fullDate},${row.SoLEXS},${row.HEL1OS}`).join("\n");
+    const blob = new Blob([header + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `solarforge_export_${status?.timestamp?.replace(/[: ]/g, '_') || 'data'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+
   const exportCSV = () => {
     if (!history || history.length === 0) return;
     const header = "Time,SoLEXS,HEL1OS\n";
@@ -423,6 +445,19 @@ function App() {
     }
   }, [status, soundEnabled, playAlarmSound]);
 
+
+  useEffect(() => {
+    if (status && status.RiskLabel) {
+      if (status.RiskLabel === 'X-CLASS' && prevRiskRef.current !== 'X-CLASS') {
+        playConsoleSound('siren');
+        document.body.classList.add('red-alert');
+      } else if (status.RiskLabel !== 'X-CLASS') {
+        document.body.classList.remove('red-alert');
+      }
+      prevRiskRef.current = status.RiskLabel;
+    }
+  }, [status, playConsoleSound]);
+
   if (loading || !status || status.error) {
     return (
       <div className="loading">
@@ -455,6 +490,45 @@ function App() {
   };
 
   // Determine animation theme based on risk level
+
+  const chartData = {
+    labels: history.map(h => h.time),
+    datasets: [
+      showSoLEXS ? {
+        label: 'SoLEXS (cps)',
+        data: history.map(h => h.SoLEXS),
+        borderColor: '#ff3366',
+        backgroundColor: 'rgba(255, 51, 102, 0.2)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHitRadius: 10
+      } : null,
+      showHEL1OS ? {
+        label: 'HEL1OS (cps)',
+        data: history.map(h => h.HEL1OS),
+        borderColor: '#33ccff',
+        backgroundColor: 'rgba(51, 204, 255, 0.2)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHitRadius: 10
+      } : null
+    ].filter(Boolean)
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)' } },
+      y: { type: 'logarithmic', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.5)', min: 1 } }
+    },
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    interaction: { mode: 'index', intersect: false }
+  };
+
   const getThemeClass = (risk) => {
     switch(risk) {
       case 'X-CLASS': return 'theme-x-class';
@@ -700,6 +774,15 @@ function App() {
 
                   {/* Action buttons */}
                   <div className="warp-action-buttons" style={{ display: 'flex', gap: '0.4rem', marginTop: '0.2rem' }}>
+
+                    <button 
+                      className="warp-btn" 
+                      onClick={exportCSV}
+                      style={{ '--glow-color': currentColor, flexGrow: 1, background: 'rgba(255, 255, 255, 0.1)' }}
+                    >
+                      Export CSV
+                    </button>
+
 
                     <button 
                       className="warp-btn" 
@@ -1236,46 +1319,7 @@ function App() {
               </div>
               
               <div style={{ height: '280px', width: '100%', marginTop: '1rem' }}>
-                <ResponsiveContainer>
-                  <AreaChart data={history} margin={{ top: 15, right: 0, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorSoLEXS" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#00d2ff" stopOpacity={0.8}/>
-                        <stop offset="95%" stopColor="#00d2ff" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorHEL1OS" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#ff2a2a" stopOpacity={0.8}/>
-                        <stop offset="95%" stopColor="#ff2a2a" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="time" stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} minTickGap={40} />
-                    <YAxis stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} />
-                    <Tooltip 
-                      content={<CustomTooltip history={history} currentColor={currentColor} />} 
-                      isAnimationActive={false} 
-                      cursor={{ stroke: 'rgba(255, 255, 255, 0.12)', strokeWidth: 1 }} 
-                    />
-                    
-                    {/* Alert Threshold Line */}
-                    <ReferenceLine 
-                      y={200} 
-                      stroke="#ff2a2a" 
-                      strokeDasharray="4 4" 
-                      strokeOpacity={0.5} 
-                      label={{ 
-                        value: 'ALERT THRESHOLD (200 cps)', 
-                        fill: '#ff2a2a', 
-                        fontSize: 10, 
-                        fontFamily: 'var(--font-mono)', 
-                        position: 'top',
-                        dy: -4
-                      }} 
-                    />
-                    
-                    {showSoLEXS && <Area type="monotone" dataKey="SoLEXS" stroke="#00d2ff" strokeWidth={2} fillOpacity={1} fill="url(#colorSoLEXS)" />}
-                    {showHEL1OS && <Area type="monotone" dataKey="HEL1OS" stroke="#ff2a2a" strokeWidth={2} fillOpacity={1} fill="url(#colorHEL1OS)" />}
-                  </AreaChart>
-                </ResponsiveContainer>
+                <Line data={chartData} options={chartOptions} />
               </div>
             </motion.div>
           </div>
