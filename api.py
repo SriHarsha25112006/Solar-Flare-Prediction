@@ -454,8 +454,12 @@ def set_time(timestamp: str):
 def get_warp_presets():
     return [
         {"name": "Telemetry Start", "timestamp": "2024-02-01 00:00:00", "description": "Baseline Nominal State"},
+        {"name": "Historic X-Class Event", "timestamp": "2024-05-09 17:30:00", "description": "Massive X-Class Spike (Max Prob)"},
+        {"name": "Massive X-Class Peak", "timestamp": "2024-05-11 09:30:00", "description": "Severe Catastrophic Event"},
+        {"name": "Major X-Class Flare", "timestamp": "2024-02-07 13:30:00", "description": "Sudden X-class anomaly"},
+        {"name": "Extreme X-Class Spike", "timestamp": "2024-05-14 10:00:00", "description": "High-intensity radiation spike"},
+        {"name": "Severe X-Class Threat", "timestamp": "2024-05-04 15:00:00", "description": "Sustained X-class buildup"},
         {"name": "Peak SoLEXS Flare (X1.4)", "timestamp": "2024-05-14 16:45:00", "description": "Peak X-class flare (28,460 cps)"},
-        {"name": "First HEL1OS Activity", "timestamp": "2024-07-01 00:30:00", "description": "HEL1OS sensor activates online"},
         {"name": "Peak HEL1OS Event (M4.8)", "timestamp": "2026-02-01 23:50:00", "description": "Catastrophic HEL1OS peak (116,939 cps)"}
     ]
 

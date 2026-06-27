@@ -41,6 +41,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [recentFlares, setRecentFlares] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [optimisticSpeed, setOptimisticSpeed] = useState(null);
   const [showSoLEXS, setShowSoLEXS] = useState(true);
   const [showHEL1OS, setShowHEL1OS] = useState(true);
   
@@ -221,13 +222,13 @@ function App() {
 
   const handleSetSpeed = async (speedVal) => {
     try {
-      // setLoading(true); removed to prevent UI flash
+      setOptimisticSpeed(speedVal);
       await axios.post(`${API_URL}/set_speed?speed=${speedVal}`);
       await fetchData();
     } catch (err) {
       console.error("Error setting speed:", err);
     } finally {
-      setLoading(false);
+      setTimeout(() => setOptimisticSpeed(null), 500); // clear optimistic state
     }
   };
 
