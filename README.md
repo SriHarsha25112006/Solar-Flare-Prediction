@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="./frontend/dist/app-icon.png" width="120" alt="SolarForge Icon"/>
+<img src="./frontend/dist/app-icon.png" width="120" alt="Project Hail Icon"/>
 
-# ☀️ SolarForge
+# ☀️ Project Hail
 ### Real-Time Solar Flare Prediction · ISRO Aditya-L1
 
 [![Live Dashboard](https://img.shields.io/badge/🚀%20Live%20Dashboard-Online-brightgreen?style=for-the-badge)](https://solar-flare-prediction-bscp.onrender.com)
@@ -14,7 +14,7 @@
 
 **End-to-end operational pipeline for space weather nowcasting directly from uncalibrated Level-0 orbital telemetry of ISRO's Aditya-L1 satellite (SoLEXS & HEL1OS instruments).**
 
-Built for the **ISRO Bharatiya Antariksh Hackathon 2026** · Team SolarForge
+Built for the **ISRO Bharatiya Antariksh Hackathon 2026** · Team Project Hail
 
 </div>
 
@@ -26,7 +26,7 @@ Built for the **ISRO Bharatiya Antariksh Hackathon 2026** · Team SolarForge
 
 The dashboard runs at **6× simulated playback speed** so you can watch live solar flare transitions, warning escalations, and multi-horizon forecasts in real-time without waiting hours.
 
-![SolarForge Dashboard](./solar_dashboard.png)
+![Project Hail Dashboard](./solar_dashboard.png)
 
 ### Dashboard Features at a Glance
 | Panel | What it shows |
@@ -43,7 +43,7 @@ The dashboard runs at **6× simulated playback speed** so you can watch live sol
 
 ## 🏗️ System Architecture
 
-![SolarForge Architecture](./architecture.png)
+![Project Hail Architecture](./architecture.png)
 
 ```
 Aditya-L1 Raw ZIP Files
@@ -146,7 +146,7 @@ We downloaded the **official GOES X-ray Flare Catalog** (1,803 confirmed flares)
 |--------|--------|
 | Total Confirmed Flares (GOES) | 1,803 |
 | Flares while satellite was online | 1,660 |
-| Detected by SolarForge | **1,441** |
+| Detected by Project Hail | **1,441** |
 | **True Recall** | **86.81%** |
 
 > The missing 13% is attributable to **Sensor Blinding via Solar Energetic Particles (SEPs)** — during extreme flares, high-energy protons force uncalibrated Level-0 sensors into saturation. This is a real physical limitation, not an algorithmic failure. **87% true recall on raw, uncalibrated Level-0 telemetry is an outstanding scientific result.**
@@ -230,7 +230,7 @@ The backend loads `dataset.parquet` at startup, reduces memory footprint by **~8
 
 **Built with ❤️ for ISRO Bharatiya Antariksh Hackathon 2026**
 
-*Team SolarForge*
+*Team Project Hail*
 
 [![Live Dashboard](https://img.shields.io/badge/🌟%20Try%20the%20Live%20Dashboard-Click%20Here-FF6F00?style=for-the-badge)](https://solar-flare-prediction-bscp.onrender.com)
 

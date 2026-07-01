@@ -1,0 +1,11 @@
+### Slide 3: Opportunity & Solution Alignment (Page 3)
+
+*   **1. Distinctiveness (How it differs from existing ideas):**
+    *   **Direct Level-0 Ingestion:** Bypasses hours of calibration latency by predicting directly on raw Aditya-L1 counts (SoLEXS & HEL1OS) rather than waiting for processed GOES catalogs.
+    *   **Chronological Validation:** Uses strict time-series splitting to simulate true operational environments and eliminate random-shuffling data leakage.
+*   **2. Problem Solving (How it solves the problem):**
+    *   **Physics-Informed Kinematics:** Extracts raw flux velocity ($v'$) and acceleration ($v''$) via Savitzky-Golay filtering to model the Neupert Effect.
+    *   **DuckDB Pipeline:** Leverages DuckDB to merge and query 71 million rows of multi-instrument telemetry in under 3 seconds.
+*   **3. Unique Selling Proposition (USP):**
+    *   **NASA-Validated Recall:** Achieves **86.81% True Recall** against the NASA GOES catalog with an F1-score optimized architecture that suppresses noise-floor false alarms.
+    *   **Operational Readiness:** A complete end-to-end pipeline (FastAPI backend + React PWA client) serving queries in $O(\log N)$ time.

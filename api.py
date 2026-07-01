@@ -1,5 +1,5 @@
 """
-api.py — SolarForge Simulated API Backend
+api.py — Project Hail Simulated API Backend
 =============================================
 Serves pre-computed predictions at 10x speed using historical Aditya-L1 data.
 """
@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 warnings.filterwarnings('ignore')
 
-app = FastAPI(title="SolarForge API (10x Simulation)", version="3.1.0")
+app = FastAPI(title="Project Hail API (10x Simulation)", version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,7 +43,7 @@ SIMULATION_SPEEDS = {
 }
 CURRENT_SPEED_LABEL = "10x"
 
-print(f"[SolarForge] Loading telemetry from {CSV_PATH}...")
+print(f"[Project Hail] Loading telemetry from {CSV_PATH}...")
 try:
     # Explicit dtypes to minimize memory footprint
     dtypes = {
@@ -66,9 +66,9 @@ try:
     _df = pd.read_csv(CSV_PATH, dtype=dtypes)
     _df['timestamp'] = pd.to_datetime(_df['timestamp'])
     _df = _df.sort_values('timestamp').reset_index(drop=True)
-    print(f"[SolarForge] Loaded {len(_df):,} rows. Memory usage: {_df.memory_usage(deep=True).sum() / (1024*1024):.2f} MB")
+    print(f"[Project Hail] Loaded {len(_df):,} rows. Memory usage: {_df.memory_usage(deep=True).sum() / (1024*1024):.2f} MB")
 except Exception as e:
-    print(f"[SolarForge] Error loading data: {e}")
+    print(f"[Project Hail] Error loading data: {e}")
     _df = pd.DataFrame()
 
 # Time synchronization
@@ -441,14 +441,14 @@ def set_time(timestamp: str):
         REAL_START_TIME = time.time()
         
         new_time_str = str(_df.iloc[closest_idx]['timestamp'])
-        print(f"[SolarForge] Time travel request: {timestamp} -> Jumped to index {closest_idx} ({new_time_str})")
+        print(f"[Project Hail] Time travel request: {timestamp} -> Jumped to index {closest_idx} ({new_time_str})")
         return {
             "status": "success", 
             "new_index": closest_idx, 
             "timestamp": new_time_str
         }
     except Exception as e:
-        print(f"[SolarForge] Time travel error: {e}")
+        print(f"[Project Hail] Time travel error: {e}")
         return {"status": "error", "message": str(e)}
 
 
@@ -478,7 +478,7 @@ def set_speed(speed: str):
         SAMPLES_PER_SECOND = SIMULATION_SPEEDS[speed]
         CURRENT_SPEED_LABEL = speed
         
-        print(f"[SolarForge] Simulation speed set to {speed} (Samples/sec: {SAMPLES_PER_SECOND})")
+        print(f"[Project Hail] Simulation speed set to {speed} (Samples/sec: {SAMPLES_PER_SECOND})")
         return {"status": "success", "speed": speed}
     return {"status": "error", "message": "Invalid speed value"}
 

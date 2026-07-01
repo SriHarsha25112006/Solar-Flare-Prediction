@@ -53,7 +53,7 @@ function App() {
   // Audio state
   const [soundEnabled, setSoundEnabled] = useState(() => {
     try {
-      const saved = localStorage.getItem('solarforge_sound_enabled');
+      const saved = localStorage.getItem('projecthail_sound_enabled');
       return saved ? JSON.parse(saved) : false;
     } catch {
       return false;
@@ -64,7 +64,7 @@ function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('solarforge_sound_enabled', JSON.stringify(soundEnabled));
+      localStorage.setItem('projecthail_sound_enabled', JSON.stringify(soundEnabled));
     } catch (e) {
       console.warn("localStorage write blocked:", e);
     }
@@ -112,7 +112,7 @@ function App() {
   const [warpPresets, setWarpPresets] = useState([]);
   const [bookmarks, setBookmarks] = useState(() => {
     try {
-      const saved = localStorage.getItem('solarforge_bookmarks');
+      const saved = localStorage.getItem('projecthail_bookmarks');
       if (saved) return JSON.parse(saved);
       return [
         { name: "1. Massive X-Class Peak", timestamp: "2024-05-11 09:30:00" },
@@ -135,7 +135,7 @@ function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `solarforge_export_${status?.timestamp?.replace(/[: ]/g, '_') || 'data'}.csv`);
+    link.setAttribute("download", `projecthail_export_${status?.timestamp?.replace(/[: ]/g, '_') || 'data'}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -252,7 +252,7 @@ function App() {
     const label = bookmarkLabel.trim() || `Bookmark at ${status.timestamp.split(' ')[1]}`;
     const newB = [...bookmarks, { name: label, timestamp: status.timestamp }];
     setBookmarks(newB);
-    localStorage.setItem('solarforge_bookmarks', JSON.stringify(newB));
+    localStorage.setItem('projecthail_bookmarks', JSON.stringify(newB));
     setBookmarkLabel('');
   };
 
@@ -260,7 +260,7 @@ function App() {
     playConsoleSound('click');
     const newB = bookmarks.filter((_, idx) => idx !== idxToRemove);
     setBookmarks(newB);
-    localStorage.setItem('solarforge_bookmarks', JSON.stringify(newB));
+    localStorage.setItem('projecthail_bookmarks', JSON.stringify(newB));
   };
 
   const playAlarmSound = useCallback(() => {
@@ -372,7 +372,7 @@ function App() {
     return (
       <div className="loading">
         <div className="spinner"></div>
-        <h2>{status && status.error ? "ERROR: " + status.error : "INITIALIZING SOLARFORGE..."}</h2>
+        <h2>{status && status.error ? "ERROR: " + status.error : "INITIALIZING PROJECT HAIL..."}</h2>
       </div>
     );
   }
@@ -436,7 +436,7 @@ function App() {
               <circle cx="12" cy="12" r="5" />
               <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
             </svg>
-            SOLARFORGE ENGINE
+            PROJECT HAIL ENGINE
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
             <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
