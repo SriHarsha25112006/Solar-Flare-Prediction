@@ -211,12 +211,17 @@ export default function App() {
     }
   }, []);
 
+  const connModeRef = useRef(connMode);
+  useEffect(() => {
+    connModeRef.current = connMode;
+  }, [connMode]);
+
   // WebSockets Connection with Exponential Backoff Reconnect & Fail-Safe REST Polling
   useEffect(() => {
     fetchData();
 
     const pollInterval = setInterval(() => {
-      if (connMode !== 'WEBSOCKET') {
+      if (connModeRef.current !== 'WEBSOCKET') {
         fetchData();
       }
     }, 2000);
@@ -272,7 +277,7 @@ export default function App() {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [fetchData, connMode]);
+  }, [fetchData]);
 
   if (loading || !status) {
     return (
