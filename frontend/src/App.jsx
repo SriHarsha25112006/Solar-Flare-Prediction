@@ -13,6 +13,7 @@ export default function App() {
   const [connMode, setConnMode] = useState('CONNECTING'); // WEBSOCKET, REST_FALLBACK, CONNECTING
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  const reconnectDelayRef = useRef(3000); // exponential backoff state
 
   const fetchData = useCallback(async () => {
     try {
@@ -32,11 +33,11 @@ export default function App() {
     }
   }, []);
 
-  // WebSockets Connection with Auto-Reconnect & Fail-Safe Polling
+  // WebSockets Connection with Exponential Backoff Reconnect & Fail-Safe REST Polling
   useEffect(() => {
     fetchData();
 
-    // Fail-safe REST polling interval (every 2 seconds if WebSocket drops)
+    // Fail-safe REST polling every 2 seconds when WebSocket is not live
     const pollInterval = setInterval(() => {
       if (connMode !== 'WEBSOCKET') {
         fetchData();
@@ -53,6 +54,7 @@ export default function App() {
 
         wsRef.current.onopen = () => {
           setConnMode('WEBSOCKET');
+          reconnectDelayRef.current = 3000; // reset backoff on successful connect
           if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
         };
 
@@ -74,12 +76,16 @@ export default function App() {
 
         wsRef.current.onclose = () => {
           setConnMode('REST_FALLBACK');
-          // Auto-reconnect after 3 seconds
-          reconnectTimerRef.current = setTimeout(connectWebSocket, 3000);
+          // Exponential backoff: 3s → 6s → 12s → max 30s
+          const delay = reconnectDelayRef.current;
+          reconnectDelayRef.current = Math.min(delay * 2, 30000);
+          reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
         };
       } catch (e) {
         setConnMode('REST_FALLBACK');
-        reconnectTimerRef.current = setTimeout(connectWebSocket, 3000);
+        const delay = reconnectDelayRef.current;
+        reconnectDelayRef.current = Math.min(delay * 2, 30000);
+        reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
       }
     };
 
@@ -129,7 +135,7 @@ export default function App() {
       <div className="cyber-bg"></div>
       <div className="scanline"></div>
 
-      <div style={{ minHeight: '100vh', padding: '2rem 1.5rem', maxWidth: '1440px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      <div style={{ padding: '2rem 1.5rem 2rem', maxWidth: '1440px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
         
         {/* NEON FUTURISTIC HEADER */}
         <header className="neon-panel" style={{ padding: '1.5rem 2rem', '--glow-color': currentColor, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
