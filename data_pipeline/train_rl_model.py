@@ -1,8 +1,8 @@
 """
-train_rl_model.py — Multi-Horizon NOAA Online Adaptive RL Agent Trainer
-======================================================================
-Trains the OnlineAdaptiveAgent with multi-horizon online SGD classifiers (T+0, T+15m, T+30m, T+1h, T+2h, T+4h)
-using policy gradient step updates, reward optimization, and metric logging.
+train_rl_model.py — Empirical Multi-Horizon Online Adaptive RL Agent Trainer
+=============================================================================
+Trains the OnlineAdaptiveAgent with StandardScaler normalization, policy gradient
+weight adaptations, and multi-horizon SGD classifiers (T+0, T+15m, T+30m, T+1h, T+2h, T+4h).
 """
 
 import os
@@ -16,6 +16,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sklearn.linear_model import SGDClassifier
+from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
@@ -27,6 +28,9 @@ class OnlineAdaptiveAgent:
         self.feature_names = feature_names
         self.num_features = len(feature_names)
         self.classes = np.array([0, 1, 2, 3]) # Nominal, C, M, X
+        
+        self.scaler = StandardScaler()
+        self.scaler_fitted = False
         
         self.online_clf = SGDClassifier(
             loss='log_loss', penalty='l2', alpha=1e-4, learning_rate='optimal', random_state=42
@@ -43,12 +47,16 @@ class OnlineAdaptiveAgent:
         self.weight_update_count = 0
         self.history_rewards = []
         
+        # Pre-fit online classifier with initial uniform prior
         dummy_X = np.random.randn(20, self.num_features).astype(np.float64)
         dummy_y = np.random.choice(self.classes, 20)
+        self.scaler.fit(dummy_X)
+        self.scaler_fitted = True
         
-        self.online_clf.partial_fit(dummy_X, dummy_y, classes=self.classes)
+        dummy_scaled = self.scaler.transform(dummy_X)
+        self.online_clf.partial_fit(dummy_scaled, dummy_y, classes=self.classes)
         for h in self.horizons:
-            self.horizon_clfs[h].partial_fit(dummy_X, dummy_y, classes=self.classes)
+            self.horizon_clfs[h].partial_fit(dummy_scaled, dummy_y, classes=self.classes)
 
     def predict(self, x_vector):
         start_time = time.perf_counter()
@@ -56,7 +64,12 @@ class OnlineAdaptiveAgent:
         x_2d = np.array(x_vector, dtype=np.float64).reshape(1, -1)
         x_2d = np.nan_to_num(x_2d, nan=0.0, posinf=1e5, neginf=-1e5)
         
-        probs = self.online_clf.predict_proba(x_2d)[0]
+        if self.scaler_fitted:
+            x_scaled = self.scaler.transform(x_2d)
+        else:
+            x_scaled = x_2d
+            
+        probs = self.online_clf.predict_proba(x_scaled)[0]
         pred_class = int(np.argmax(probs))
         
         full_probs = [0.0, 0.0, 0.0, 0.0]
@@ -66,7 +79,7 @@ class OnlineAdaptiveAgent:
                 
         horizon_preds = {}
         for h in self.horizons:
-            h_probs_raw = self.horizon_clfs[h].predict_proba(x_2d)[0]
+            h_probs_raw = self.horizon_clfs[h].predict_proba(x_scaled)[0]
             h_full = [0.0, 0.0, 0.0, 0.0]
             for i, c in enumerate(self.horizon_clfs[h].classes_):
                 if c < 4:
@@ -99,6 +112,11 @@ class OnlineAdaptiveAgent:
         x_2d = np.array(x_vector, dtype=np.float64).reshape(1, -1)
         x_2d = np.nan_to_num(x_2d, nan=0.0, posinf=1e5, neginf=-1e5)
         
+        if self.scaler_fitted:
+            x_scaled = self.scaler.transform(x_2d)
+        else:
+            x_scaled = x_2d
+            
         pred_dict = self.predict(x_vector)
         pred_class = pred_dict["pred_class"]
         
@@ -114,12 +132,12 @@ class OnlineAdaptiveAgent:
         self.cumulative_reward += reward
         self.history_rewards.append(reward)
 
-        self.online_clf.partial_fit(x_2d, [true_class])
+        self.online_clf.partial_fit(x_scaled, [true_class])
         
         if horizon_targets:
             for h in self.horizons:
                 if h in horizon_targets:
-                    self.horizon_clfs[h].partial_fit(x_2d, [horizon_targets[h]])
+                    self.horizon_clfs[h].partial_fit(x_scaled, [horizon_targets[h]])
 
         self.weight_update_count += 1
 
@@ -129,7 +147,7 @@ class OnlineAdaptiveAgent:
         return reward, float(self.cumulative_reward)
 
 def train_and_save_pipeline():
-    tqdm.write("[START] Multi-Horizon NOAA Online RL Pre-Training...")
+    tqdm.write("[START] Multi-Horizon NOAA Online RL Agent Pre-Training...")
     
     features_file = os.path.join(DATA_DIR, "noaa_7day_features.parquet")
     if not os.path.exists(features_file):
@@ -150,6 +168,10 @@ def train_and_save_pipeline():
     X = df[feature_cols].fillna(0).values.astype(np.float64)
     y = df['PredictedClass'].values
     
+    agent = OnlineAdaptiveAgent(feature_names=feature_cols)
+    agent.scaler.fit(X)
+    agent.scaler_fitted = True
+    
     horizon_targets_list = []
     for idx, r in df.iterrows():
         horizon_targets_list.append({
@@ -159,8 +181,6 @@ def train_and_save_pipeline():
             "2h":  int(r.get('TargetClass_2h', 0)),
             "4h":  int(r.get('TargetClass_4h', 0))
         })
-    
-    agent = OnlineAdaptiveAgent(feature_names=feature_cols)
     
     tqdm.write("[MODEL] Multi-Horizon Pre-Training over Telemetry Stream...")
     for idx in tqdm(range(len(X)), desc="Sequential NOAA RL Updates"):
@@ -173,7 +193,7 @@ def train_and_save_pipeline():
     joblib.dump(agent, agent_path)
     
     config = {
-        "model_name": "Project Hail Multi-Horizon NOAA RL Agent",
+        "model_name": "Project Hail Empirical Multi-Horizon NOAA RL Agent",
         "feature_cols": feature_cols,
         "horizons": ["15m", "30m", "1h", "2h", "4h"],
         "trained_timestamp": time.strftime("%Y-%m-%d %H:%M:%S")

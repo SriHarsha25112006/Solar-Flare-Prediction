@@ -1,8 +1,9 @@
 """
-feature_engineering.py — Strict Astrophysical Kinematics & Multi-Horizon Feature Engine
-=======================================================================================
-Computes Savitzky-Golay flux derivatives (v', v''), Neupert hardness ratio, rolling log volatility,
-official GOES C/M/X physical thresholds, and multi-horizon target labels (T+15m to T+4h).
+feature_engineering.py — Empirical Signal Kinematics & Feature Scaling Engine
+=============================================================================
+Computes Savitzky-Golay derivatives (v', v''), Neupert Effect hardness ratios,
+rolling log volatility, official GOES physical flare thresholds (C, M, X),
+and multi-horizon target labels (T+15m to T+4h) over real NOAA telemetry.
 """
 
 import os
@@ -28,18 +29,17 @@ def compute_kinematics(series, window_length=11, polyorder=3):
     return smooth, vel, accel
 
 def process_feature_engineering():
-    tqdm.write("[LOAD] Step 1/3: Loading NOAA raw telemetry...")
+    tqdm.write("[LOAD] Step 1/3: Loading raw NOAA GOES telemetry...")
     input_file = os.path.join(DATA_DIR, "noaa_7day_raw.parquet")
     if not os.path.exists(input_file):
         from data_pipeline.fetch_data import run_fetch_pipeline
         run_fetch_pipeline()
         
     df = pd.read_parquet(input_file)
-    tqdm.write(f"[STATS] Telemetry samples: {len(df):,}")
+    tqdm.write(f"[STATS] Samples: {len(df):,}")
     
     tqdm.write("[KINEMATICS] Step 2/3: Applying Savitzky-Golay flux derivatives & Neupert hardness ratio...")
     
-    # Kinematics on GOES Long & Short X-ray Flux
     long_smooth, long_vel, long_accel = compute_kinematics(df['GOES_LONG_FLUX'])
     short_smooth, short_vel, short_accel = compute_kinematics(df['GOES_SHORT_FLUX'])
     
@@ -58,7 +58,7 @@ def process_feature_engineering():
     df['long_flux_var_5m']  = df['GOES_LONG_FLUX'].rolling(window=5, min_periods=1).var().fillna(0).astype('float64')
     df['log_volatility_10m'] = np.log10(df['GOES_LONG_FLUX']).rolling(window=10, min_periods=1).std().fillna(0).astype('float64')
     
-    # Official GOES Flare Physical Thresholds (W/m^2)
+    # Official GOES Physical Class Thresholds (W/m^2)
     # Nominal: < 1e-6, C-Class: 1e-6 to 1e-5, M-Class: 1e-5 to 1e-4, X-Class: >= 1e-4
     long_flux = df['GOES_LONG_FLUX'].values
     N = len(df)
@@ -72,7 +72,7 @@ def process_feature_engineering():
     risk_map = {0: 'NOMINAL', 1: 'C-CLASS', 2: 'M-CLASS', 3: 'X-CLASS'}
     df['RiskLabel'] = df['PredictedClass'].map(risk_map)
 
-    # Horizons (15m=15, 30m=30, 1h=60, 2h=120, 4h=240)
+    # Multi-horizon targets (15m=15, 30m=30, 1h=60, 2h=120, 4h=240)
     horizons = {
         "15m": 15,
         "30m": 30,
@@ -81,8 +81,8 @@ def process_feature_engineering():
         "4h": 240
     }
     
-    tqdm.write("[TARGETS] Computing multi-horizon targets (T+15m, T+30m, T+1h, T+2h, T+4h)...")
-    for h_name, steps in tqdm(horizons.items(), desc="Multi-Horizon Targets"):
+    tqdm.write("[TARGETS] Step 3/3: Mapping multi-horizon lookahead targets (T+15m to T+4h)...")
+    for h_name, steps in tqdm(horizons.items(), desc="Horizon Targets"):
         future_max = pd.Series(long_flux).shift(-steps).rolling(window=steps, min_periods=1).max().ffill().fillna(0).values
         
         target_class = np.zeros(N, dtype='int8')
@@ -95,8 +95,8 @@ def process_feature_engineering():
 
     output_file = os.path.join(DATA_DIR, "noaa_7day_features.parquet")
     df.to_parquet(output_file, compression='snappy')
-    tqdm.write(f"[SAVE] Step 3/3: Feature engineered dataset saved to {output_file}")
-    tqdm.write("[DONE] Kinematics & Feature Extraction Complete!")
+    tqdm.write(f"[SAVE] Feature dataset saved to {output_file}")
+    tqdm.write("[DONE] Kinematics & Feature Engineering Complete!")
     return output_file
 
 if __name__ == '__main__':
