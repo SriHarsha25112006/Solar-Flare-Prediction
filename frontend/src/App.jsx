@@ -16,25 +16,176 @@ import {
 } from 'recharts';
 import './index.css';
 
-const getApiUrl = () => {
-  const { hostname, port, protocol } = window.location;
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    // If running under a Vite dev server (port 5173/3000), fallback to backend at 8000.
-    // Otherwise, use the port uvicorn is currently binding to.
-    const targetPort = (port === '5173' || port === '3000' || !port) ? '8000' : port;
-    return `${protocol}//${hostname}:${targetPort}/api`;
-  }
-  return '/api';
-};
-const API_URL = getApiUrl();
+const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : '/api';
 
+// --- FUTURISTIC 3D SOLAR CORONA VECTOR CANVAS COMPONENT ---
+function SolarCoronaGlobe({ goesLongFlux, volatility }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let animationId;
+    let rotationAngle = 0;
+
+    // Scale dynamics by actual NOAA measurements
+    const fluxVal = parseFloat(goesLongFlux) || 1e-7;
+    const normalizedFlux = Math.min(1.0, Math.max(0.1, Math.log10(fluxVal) + 9) / 6); // scale 1e-9 to 1e-3
+    const speed = 0.005 + normalizedFlux * 0.02; // speed up rotation during solar storms
+    const flareIntensity = normalizedFlux;
+
+    const resizeCanvas = () => {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight || 280;
+    };
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const baseRadius = Math.min(canvas.width, canvas.height) * 0.28;
+
+      rotationAngle += speed;
+
+      // 1. Draw outermost background coronal plasma field
+      const coronaGlow = ctx.createRadialGradient(centerX, centerY, baseRadius * 0.8, centerX, centerY, baseRadius * 2.2);
+      coronaGlow.addColorStop(0, 'rgba(0, 243, 255, 0.15)');
+      coronaGlow.addColorStop(0.4, 'rgba(255, 0, 85, 0.08)');
+      coronaGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = coronaGlow;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, baseRadius * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2. Draw rotating 3D wireframe sphere lines (Sci-fi holographic sun)
+      ctx.strokeStyle = 'rgba(0, 243, 255, 0.25)';
+      ctx.lineWidth = 1;
+
+      // Longitudinal lines
+      for (let i = 0; i < 6; i++) {
+        const angleOffset = (i * Math.PI) / 6 + rotationAngle;
+        const widthFactor = Math.sin(angleOffset) * baseRadius;
+        
+        ctx.beginPath();
+        ctx.ellipse(centerX, centerY, Math.abs(widthFactor), baseRadius, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Latitudinal lines
+      for (let i = -4; i <= 4; i++) {
+        const yOffset = (i * baseRadius) / 5;
+        const rFactor = Math.sqrt(Math.max(0, baseRadius * baseRadius - yOffset * yOffset));
+        
+        ctx.beginPath();
+        ctx.ellipse(centerX, centerY + yOffset, rFactor, rFactor * 0.2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // 3. Draw active solar prominence plasma arches (magnetic reconnection loops)
+      const numArcs = 5 + Math.floor(flareIntensity * 8);
+      ctx.strokeStyle = flareIntensity > 0.6 ? 'rgba(255, 0, 85, 0.8)' : 'rgba(0, 243, 255, 0.7)';
+      ctx.shadowColor = flareIntensity > 0.6 ? 'var(--neon-pink)' : 'var(--neon-cyan)';
+      ctx.shadowBlur = 10 + flareIntensity * 20;
+
+      for (let i = 0; i < numArcs; i++) {
+        const arcAngle = (i * Math.PI * 2) / numArcs + rotationAngle * 0.5;
+        const startX = centerX + Math.cos(arcAngle) * baseRadius;
+        const startY = centerY + Math.sin(arcAngle) * baseRadius;
+
+        const loopHeight = baseRadius * (0.15 + Math.sin(rotationAngle * 3 + i) * 0.15 + flareIntensity * 0.35);
+        const endAngle = arcAngle + 0.3 + (i % 2 === 0 ? 0.1 : -0.1);
+        const endX = centerX + Math.cos(endAngle) * baseRadius;
+        const endY = centerY + Math.sin(endAngle) * baseRadius;
+
+        const ctrlX = centerX + Math.cos((arcAngle + endAngle) / 2) * (baseRadius + loopHeight * 1.5);
+        const ctrlY = centerY + Math.sin((arcAngle + endAngle) / 2) * (baseRadius + loopHeight * 1.5);
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.quadraticCurveTo(ctrlX, ctrlY, endX, endY);
+        ctx.lineWidth = 1.5 + flareIntensity * 2;
+        ctx.stroke();
+      }
+
+      // Reset shadows
+      ctx.shadowBlur = 0;
+
+      // 4. Draw Core Sun Disk
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, baseRadius, 0, Math.PI * 2);
+      const diskGlow = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, baseRadius);
+      diskGlow.addColorStop(0, 'rgba(8, 12, 24, 0.95)');
+      diskGlow.addColorStop(0.85, 'rgba(8, 12, 24, 0.8)');
+      diskGlow.addColorStop(1, flareIntensity > 0.6 ? 'rgba(255, 0, 85, 0.5)' : 'rgba(0, 243, 255, 0.4)');
+      ctx.fillStyle = diskGlow;
+      ctx.fill();
+
+      // Core border ring
+      ctx.strokeStyle = flareIntensity > 0.6 ? 'rgba(255, 0, 85, 0.5)' : 'rgba(0, 243, 255, 0.4)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      animationId = requestAnimationFrame(draw);
+    };
+
+    draw();
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      cancelAnimationFrame(animationId);
+    };
+  }, [goesLongFlux, volatility]);
+
+  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />;
+}
+
+// --- HOLOGRAPHIC HETEROGENEOUS RADAR RING GAUGE ---
+function HolographicGauge({ label, value, subtext, pct, color }) {
+  const radius = 50;
+  const strokeWidth = 6;
+  const circ = 2 * Math.PI * radius;
+  const strokeDashoffset = circ - (Math.min(100, Math.max(0, pct)) / 100) * circ;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)', textAlign: 'center' }}>
+      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
+      <div style={{ position: 'relative', width: '120px', height: '120px', margin: '0.8rem 0' }}>
+        <svg width="120" height="120" style={{ transform: 'rotate(-90deg)' }}>
+          {/* Background track */}
+          <circle cx="60" cy="60" r={radius} fill="transparent" stroke="rgba(255,255,255,0.03)" strokeWidth={strokeWidth} />
+          {/* Foreground glow bar */}
+          <circle 
+            cx="60" 
+            cy="60" 
+            r={radius} 
+            fill="transparent" 
+            stroke={color} 
+            strokeWidth={strokeWidth}
+            strokeDasharray={circ}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.6s ease', filter: `drop-shadow(0 0 5px ${color})` }}
+          />
+        </svg>
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+          <span style={{ fontSize: '1.25rem', fontWeight: 900, fontFamily: 'var(--font-mono)', color: '#fff' }}>{value}</span>
+        </div>
+      </div>
+      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{subtext}</span>
+    </div>
+  );
+}
+
+// --- MAIN PORTAL ---
 export default function App() {
   const [status, setStatus] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connMode, setConnMode] = useState('CONNECTING'); // WEBSOCKET, REST_FALLBACK, CONNECTING
   const [activeTab, setActiveTab] = useState('monitor'); // monitor, diagnostics, insights, reference
-  const [manualColor, setManualColor] = useState(null); // allow manual glow theme override
   const [rawPage, setRawPage] = useState(0); // page for raw data table
   const rawPageSize = 10;
 
@@ -46,7 +197,7 @@ export default function App() {
     try {
       const [statusRes, historyRes] = await Promise.all([
         axios.get(`${API_URL}/status`),
-        axios.get(`${API_URL}/history?limit=150`) // fetch more history for robust data table
+        axios.get(`${API_URL}/history?limit=150`)
       ]);
       if (statusRes.data && !statusRes.data.error) {
         setStatus(statusRes.data);
@@ -123,25 +274,13 @@ export default function App() {
     };
   }, [fetchData, connMode]);
 
-  const handleExportCSV = () => {
-    if (!history || history.length === 0) return;
-    const header = "Time,GOES_Long_Flux_Wm2,GOES_Short_Flux_Wm2\n";
-    const body = history.map(h => `${h.fullDate},${h.GOES_Long},${h.GOES_Short}`).join('\n');
-    const blob = new Blob([header + body], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `noaa_7day_telemetry_${status?.timestamp?.replace(/[: ]/g, '_') || 'stream'}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   if (loading || !status) {
     return (
-      <div className="loading">
-        <div className="spinner"></div>
-        <h2 className="glow-text">CONNECTING TO NEON NOAA TELEMETRY STREAM...</h2>
+      <div className="loading" style={{ background: '#05070f', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', width: '100vw', gap: '1.5rem' }}>
+        <div className="spinner" style={{ border: '3px solid rgba(0, 243, 255, 0.1)', borderTop: '3px solid var(--neon-cyan)', borderRadius: '50%', width: '60px', height: '60px', animation: 'spin 1s linear infinite' }}></div>
+        <h2 className="glow-text" style={{ fontSize: '1.5rem', fontWeight: 900, color: 'var(--neon-cyan)', letterSpacing: '3px', fontFamily: 'var(--font-main)', '--glow-color': 'var(--neon-cyan)' }}>
+          CONNECTING TO SOLARFORGE...
+        </h2>
       </div>
     );
   }
@@ -152,8 +291,7 @@ export default function App() {
     'M-CLASS': '#ff7b00',
     'X-CLASS': 'var(--neon-pink)'
   };
-  const autoColor = riskColors[status.RiskLabel] || 'var(--neon-green)';
-  const currentColor = manualColor || autoColor;
+  const alertColor = riskColors[status.RiskLabel] || 'var(--neon-green)';
   const insights = status.insights || {};
 
   // Formulate Weight data for Recharts Bar Chart
@@ -185,7 +323,7 @@ export default function App() {
     const events = [];
     let activeSpike = null;
 
-    history.forEach((point, i) => {
+    history.forEach((point) => {
       const longVal = point.GOES_Long;
       let classification = null;
       if (longVal >= 1e-4) classification = 'X-CLASS';
@@ -205,7 +343,6 @@ export default function App() {
             activeSpike.peakVal = longVal;
             activeSpike.peakTime = point.time;
           }
-          // Promote type if it escalates
           if (classification === 'X-CLASS' || (classification === 'M-CLASS' && activeSpike.type !== 'X-CLASS')) {
             activeSpike.type = classification;
           }
@@ -239,60 +376,34 @@ export default function App() {
       <div style={{ padding: '2rem 1.5rem 2rem', maxWidth: '1440px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         
         {/* HEADER */}
-        <header className="neon-panel" style={{ padding: '1.2rem 2rem', '--glow-color': currentColor, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+        <header className="neon-panel" style={{ padding: '1.2rem 2rem', '--glow-color': 'var(--neon-cyan)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
-            <h1 className="glow-text" style={{ fontSize: '2rem', fontWeight: 900, letterSpacing: '2px', color: '#fff', display: 'flex', alignItems: 'center', gap: '0.8rem', '--glow-color': currentColor }}>
-              <span className="live-dot" style={{ backgroundColor: autoColor, boxShadow: `0 0 12px ${autoColor}` }}></span>
-              PROJECT HAIL
+            <h1 className="glow-text" style={{ fontSize: '2.4rem', fontWeight: 900, letterSpacing: '3px', color: '#fff', display: 'flex', alignItems: 'center', gap: '0.8rem', '--glow-color': 'var(--neon-cyan)' }}>
+              <span className="live-dot" style={{ backgroundColor: 'var(--neon-cyan)', boxShadow: '0 0 12px var(--neon-cyan)' }}></span>
+              SOLARFORGE
             </h1>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem', letterSpacing: '0.5px' }}>
-              Autonomous Space Weather Intelligence Portal & Online Adaptive RL Pipeline
+              Deep-Space Solar Flux Intelligence & Autonomous Online RL Core
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            {/* Color Palette Toggle Override */}
-            <div style={{ display: 'flex', gap: '0.4rem', background: 'rgba(0,0,0,0.4)', padding: '0.3rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <button 
-                onClick={() => setManualColor(null)}
-                style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'linear-gradient(45deg, #00ff88, #ff0055)', border: manualColor === null ? '2px solid #fff' : 'none', cursor: 'pointer', title: 'Auto Alert Glow' }}
-              />
-              <button 
-                onClick={() => setManualColor('var(--neon-cyan)')}
-                style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: 'var(--neon-cyan)', border: manualColor === 'var(--neon-cyan)' ? '2px solid #fff' : 'none', cursor: 'pointer' }}
-              />
-              <button 
-                onClick={() => setManualColor('var(--neon-purple)')}
-                style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: 'var(--neon-purple)', border: manualColor === 'var(--neon-purple)' ? '2px solid #fff' : 'none', cursor: 'pointer' }}
-              />
-              <button 
-                onClick={() => setManualColor('var(--neon-pink)')}
-                style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: 'var(--neon-pink)', border: manualColor === 'var(--neon-pink)' ? '2px solid #fff' : 'none', cursor: 'pointer' }}
-              />
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <div style={{ borderLeft: '2px solid rgba(0, 243, 255, 0.3)', paddingLeft: '1rem', height: '40px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>EPOCH INTEGRATION SYNC</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--neon-cyan)', fontFamily: 'var(--font-mono)' }}>
+                {status.timestamp}
+              </span>
             </div>
-
-            <span style={{ fontSize: '0.75rem', background: connMode === 'WEBSOCKET' ? 'rgba(0, 255, 136, 0.15)' : 'rgba(255, 234, 0, 0.15)', color: connMode === 'WEBSOCKET' ? 'var(--neon-green)' : 'var(--neon-yellow)', border: `1px solid ${connMode === 'WEBSOCKET' ? 'var(--neon-green)' : 'var(--neon-yellow)'}`, padding: '0.35rem 0.7rem', borderRadius: '6px', fontWeight: 700 }}>
-              {connMode === 'WEBSOCKET' ? '⚡ WS STREAM LIVE' : '📡 REST STREAM FALLBACK'}
-            </span>
-            <span style={{ fontSize: '0.75rem', background: 'rgba(0, 243, 255, 0.08)', color: 'var(--neon-cyan)', border: '1px solid rgba(0, 243, 255, 0.3)', padding: '0.35rem 0.7rem', borderRadius: '6px', fontFamily: 'var(--font-mono)' }}>
-              {status.timestamp}
-            </span>
-            <button 
-              onClick={handleExportCSV}
-              style={{ background: 'rgba(0, 255, 136, 0.15)', color: 'var(--neon-green)', border: '1px solid var(--neon-green)', padding: '0.4rem 0.8rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 700, fontSize: '0.75rem', transition: 'all 0.3s ease' }}
-            >
-              📥 Export CSV
-            </button>
           </div>
         </header>
 
         {/* WORKSPACE NAVIGATION TABS */}
         <nav style={{ display: 'flex', gap: '0.5rem', background: 'rgba(8, 12, 24, 0.6)', padding: '0.4rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap' }}>
           {[
-            { id: 'monitor', label: '🛰️ Live Monitor' },
-            { id: 'diagnostics', label: '🧠 Model Diagnostics' },
-            { id: 'insights', label: '📊 Solar Insights' },
-            { id: 'reference', label: '📚 Reference & Physics' }
+            { id: 'monitor', label: '🛰️ Flux Monitor' },
+            { id: 'diagnostics', label: '🧠 Neural RL Analytics' },
+            { id: 'insights', label: '📊 Astrophysical History' },
+            { id: 'reference', label: '📚 Space Weather Academy' }
           ].map(tab => (
             <button
               key={tab.id}
@@ -303,12 +414,12 @@ export default function App() {
                 padding: '0.75rem 1rem',
                 borderRadius: '8px',
                 border: 'none',
-                background: activeTab === tab.id ? 'rgba(0, 243, 255, 0.15)' : 'transparent',
+                background: activeTab === tab.id ? 'rgba(0, 243, 255, 0.12)' : 'transparent',
                 color: activeTab === tab.id ? '#fff' : 'var(--text-muted)',
                 cursor: 'pointer',
                 fontWeight: 700,
                 fontSize: '0.85rem',
-                borderBottom: activeTab === tab.id ? `2px solid ${currentColor}` : '2px solid transparent',
+                borderBottom: activeTab === tab.id ? '2px solid var(--neon-cyan)' : '2px solid transparent',
                 boxShadow: activeTab === tab.id ? '0 4px 12px rgba(0, 243, 255, 0.1)' : 'none',
                 transition: 'all 0.25s ease'
               }}
@@ -318,7 +429,7 @@ export default function App() {
           ))}
         </nav>
 
-        {/* WORKSPACE TABS TRANSITION WRAPPER */}
+        {/* WORKSPACE TABS */}
         <main style={{ minHeight: '500px' }}>
           <AnimatePresence mode="wait">
             <motion.div
@@ -329,53 +440,69 @@ export default function App() {
               transition={{ duration: 0.2 }}
             >
               
-              {/* TAB 1: LIVE MONITOR */}
+              {/* TAB 1: FLUX MONITOR */}
               {activeTab === 'monitor' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                   
-                  {/* Realtime Alert Dashboard Summary */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+                  {/* Realtime Alert & Core Activity Radar Globe */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
                     
-                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                    {/* Pulsing solar globe canvas */}
+                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)', height: '320px', display: 'flex', flexDirection: 'column', position: 'relative' }}>
                       <h3 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.4rem', letterSpacing: '1px' }}>
-                        🔥 CURRENT FLARE ALERT LEVEL
+                        📡 VECTOR CORONAL PLASMA VISUALIZER
                       </h3>
-                      <div className="glow-text" style={{ fontSize: '3rem', fontWeight: 900, color: currentColor, '--glow-color': currentColor }}>
-                        {status.RiskLabel}
+                      <div style={{ flex: 1, position: 'relative' }}>
+                        <SolarCoronaGlobe goesLongFlux={status.GOES_LONG_FLUX} volatility={status.hardness_ratio} />
                       </div>
-                      <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-                        Active Region Magnetic Volatility: {insights.astrophysical_diagnosis}
-                      </p>
                     </div>
 
-                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }}>
-                      <h3 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.8rem', letterSpacing: '1px' }}>
-                        🎯 DETAILED ESCALATION PROBABILITIES
-                      </h3>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.8rem' }}>
-                        <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.8rem', borderRadius: '8px', textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>C-CLASS</span>
-                          <p style={{ fontSize: '1.5rem', fontWeight: 900, color: 'var(--neon-yellow)' }}>{(status.CProb * 100).toFixed(0)}%</p>
+                    {/* Alert summary & radar rings gauges */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                      
+                      <div className="neon-panel" style={{ padding: '1.2rem', '--glow-color': 'var(--neon-purple)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <h3 style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                            CURRENT ALERT LEVEL
+                          </h3>
+                          <div className="glow-text" style={{ fontSize: '2.5rem', fontWeight: 900, color: alertColor, '--glow-color': alertColor, marginTop: '0.2rem' }}>
+                            {status.RiskLabel}
+                          </div>
                         </div>
-                        <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.8rem', borderRadius: '8px', textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>M-CLASS</span>
-                          <p style={{ fontSize: '1.5rem', fontWeight: 900, color: '#ff7b00' }}>{(status.MProb * 100).toFixed(0)}%</p>
-                        </div>
-                        <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.8rem', borderRadius: '8px', textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>X-CLASS</span>
-                          <p style={{ fontSize: '1.5rem', fontWeight: 900, color: 'var(--neon-pink)' }}>{(status.XProb * 100).toFixed(0)}%</p>
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>C / M / X PROB</span>
+                          <div style={{ fontSize: '1rem', fontWeight: 800, color: '#fff', marginTop: '0.4rem', fontFamily: 'var(--font-mono)' }}>
+                            {Math.round(status.CProb * 100)}% / {Math.round(status.MProb * 100)}% / {Math.round(status.XProb * 100)}%
+                          </div>
                         </div>
                       </div>
+
+                      {/* Heterogeneous ring gauges representing raw photon detector statistics */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                        <HolographicGauge 
+                          label="Soft X-Ray Activity" 
+                          value={`${(status.GOES_SHORT_FLUX * 1e7).toFixed(1)}`} 
+                          subtext="GOES-16 short band counts" 
+                          pct={Math.min(100, status.GOES_SHORT_FLUX * 1e7 * 10)} 
+                          color="var(--neon-cyan)" 
+                        />
+                        <HolographicGauge 
+                          label="Hardness Ratio" 
+                          value={`${status.hardness_ratio}`} 
+                          subtext="Coronal Spectral Hardness" 
+                          pct={Math.min(100, status.hardness_ratio * 1500)} 
+                          color="var(--neon-purple)" 
+                        />
+                      </div>
+
                     </div>
                   </div>
 
                   {/* Primary Chart */}
-                  <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }}>
+                  <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                      <h3 style={{ fontSize: '1rem', fontWeight: 800 }}>📈 NOAA GOES PRIMARY X-RAY TELEMETRY STREAM</h3>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 800 }}>⚡ REAL-TIME PHOTON FLUX DENSITY WAVEFORM</h3>
                       <div style={{ display: 'flex', gap: '0.8rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        <span>Hardness Ratio (S/L): <strong style={{ color: 'var(--neon-cyan)' }}>{status.hardness_ratio}</strong></span>
-                        <span>•</span>
                         <span>GOES Long: <strong style={{ color: 'var(--neon-yellow)' }}>{status.GOES_LONG_FLUX?.toExponential(2)} W/m²</strong></span>
                       </div>
                     </div>
@@ -442,7 +569,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* TAB 2: MODEL DIAGNOSTICS */}
+              {/* TAB 2: NEURAL RL ANALYTICS */}
               {activeTab === 'diagnostics' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                   
@@ -542,7 +669,7 @@ export default function App() {
 
                   {/* Feature Importance weights chart */}
                   {weightsData.length > 0 && (
-                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }}>
+                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)' }}>
                       <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '1rem' }}>🧠 LIVE RL MODEL FEATURE IMPORTANCES (GRADIENT WEIGHTS)</h3>
                       <div style={{ height: '350px', width: '100%' }}>
                         <ResponsiveContainer width="100%" height="100%">
@@ -553,7 +680,6 @@ export default function App() {
                             <Tooltip contentStyle={{ background: '#0a0a14', border: '1px solid rgba(0, 243, 255, 0.3)', borderRadius: '8px' }} />
                             <Bar dataKey="weight" name="Classifier Coefficient Importance">
                               {weightsData.map((entry, index) => {
-                                // Dynamic coloring based on weight value
                                 const colors = ['var(--neon-cyan)', 'var(--neon-purple)', 'var(--neon-yellow)', 'var(--neon-pink)'];
                                 return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
                               })}
@@ -570,7 +696,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* TAB 3: SOLAR INSIGHTS */}
+              {/* TAB 3: ASTROPHYSICAL HISTORY */}
               {activeTab === 'insights' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                   
@@ -622,7 +748,7 @@ export default function App() {
                   {/* Timeline of events and Raw log explorer */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
                     
-                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }}>
+                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)' }}>
                       <h3 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '1rem', letterSpacing: '1px' }}>
                         📜 LATEST SIGNIFICANT SOLAR SPIKES
                       </h3>
@@ -648,7 +774,7 @@ export default function App() {
                       )}
                     </div>
 
-                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }}>
+                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)' }}>
                       <h3 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '1rem', letterSpacing: '1px' }}>
                         📂 RAW TELEMETRY DATABASE EXPLORER
                       </h3>
@@ -708,7 +834,7 @@ export default function App() {
               {activeTab === 'reference' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                   
-                  <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }}>
+                  <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)' }}>
                     <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '1rem' }}>🌞 SOLAR FLARE PHYSICS & INTENSITY SCALES</h3>
                     <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.6', marginBottom: '1.2rem' }}>
                       Solar flares are massive explosions on the sun's surface caused by magnetic reconnection events in active regions (sunspots). 
@@ -739,10 +865,10 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }}>
+                  <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)' }}>
                     <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '1rem' }}>🧠 AUTOMATED ONLINE REINFORCEMENT LEARNING LOGIC</h3>
                     <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.6', marginBottom: '1.2rem' }}>
-                      Unlike static neural network models, the <strong>Project Hail Online Agent</strong> learns continuously in real-time from incoming satellite streams. 
+                      Unlike static neural network models, the <strong>SolarForge Online Agent</strong> learns continuously in real-time from incoming satellite streams. 
                       It updates its weights dynamically through gradient descent at every single timestep. 
                       Since space weather hazards are highly unbalanced (X-class flares are rare but catastrophic), the engine uses an <strong>Asymmetric Policy Gradient Reward Function</strong>:
                     </p>

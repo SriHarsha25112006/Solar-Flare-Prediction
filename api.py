@@ -52,6 +52,8 @@ def load_data_and_model():
             
         df = pd.read_parquet(DATA_FILE)
         df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['time_str'] = df['timestamp'].dt.strftime("%m/%d %H:%M")
+        df['full_date_str'] = df['timestamp'].astype(str)
         _df = df.sort_values('timestamp').reset_index(drop=True)
         print(f"[Project Hail] Loaded {_df.shape[0]:,} samples of 7-day NOAA GOES telemetry.")
     except Exception as e:
@@ -212,12 +214,18 @@ def generate_solar_insights():
         "astrophysical_diagnosis": "High Magnetic Reconnection Activity" if (m_count + x_count > 0) else "Nominal Quiet Sun Solar Magnetic Field"
     }
 
+_cached_status = None
+_cached_idx = -1
+
 def get_live_status():
+    global _cached_status, _cached_idx
     if _df.empty: return {"error": "No 7-day NOAA dataset loaded"}
     
     idx = get_current_idx()
+    if idx == _cached_idx and _cached_status is not None:
+        return _cached_status
+        
     row = _df.iloc[idx]
-    
     x_vec = row[feature_cols].fillna(0).values.astype(np.float64)
     true_class = int(row['PredictedClass'])
     
@@ -250,7 +258,7 @@ def get_live_status():
     short_flux = float(row['GOES_SHORT_FLUX'])
     risk_label = str(row['RiskLabel'])
     
-    return {
+    _cached_status = {
         "timestamp": str(row['timestamp']),
         "current_idx": idx,
         "total_rows": len(_df),
@@ -273,6 +281,8 @@ def get_live_status():
         "horizons": pred_res["horizons"],
         "insights": insights
     }
+    _cached_idx = idx
+    return _cached_status
 
 def get_live_history(limit=80):
     if _df.empty: return []
@@ -280,16 +290,15 @@ def get_live_history(limit=80):
     start_idx = max(0, curr_idx - limit)
     sub = _df.iloc[start_idx : curr_idx + 1]
     
-    out = []
-    for _, r in sub.iterrows():
-        dt = pd.to_datetime(r['timestamp'])
-        out.append({
-            "time": dt.strftime("%m/%d %H:%M"),
-            "fullDate": str(r['timestamp']),
+    return [
+        {
+            "time": r['time_str'],
+            "fullDate": r['full_date_str'],
             "GOES_Long": float(r['GOES_LONG_FLUX']),
             "GOES_Short": float(r['GOES_SHORT_FLUX'])
-        })
-    return out
+        }
+        for _, r in sub.iterrows()
+    ]
 
 @app.get("/api/status")
 def status_endpoint():
