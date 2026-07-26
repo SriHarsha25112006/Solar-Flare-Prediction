@@ -11,16 +11,10 @@
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#ff2a2a" />
     <script>
+      // Passively unregister any stale service workers without triggering a reload loop
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(registrations => {
-          for (let registration of registrations) {
-            registration.unregister().then(success => {
-              if (success) {
-                console.log('Unregistered active service worker. Reloading...');
-                window.location.reload();
-              }
-            });
-          }
+          registrations.forEach(r => r.unregister());
         });
       }
     </script>
