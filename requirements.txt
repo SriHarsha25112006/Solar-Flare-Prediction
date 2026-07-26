@@ -10,3 +10,4 @@ pyarrow
 numpy
 joblib
 websockets
+tqdm
