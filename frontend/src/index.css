@@ -23,8 +23,8 @@ body {
   font-family: var(--font-main);
   background-color: var(--bg-dark);
   color: var(--text-main);
-  min-height: 100vh;
   overflow-x: hidden;
+  padding-bottom: 2rem;
 }
 
 /* Background Cyberpunk Mesh */
