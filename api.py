@@ -1,10 +1,8 @@
 """
-api.py — Empirical Real 7-Day NOAA Space Weather Observatory & RL API
-=====================================================================
-Serves real-world 7-day primary GOES X-ray telemetry from NOAA SWPC,
-online RL model inference with empirical scikit-learn metrics calculation
-(precision, recall, F1, TSS, log-loss, latency ms), multi-horizon predictive lookaheads,
-and a 15-minute background periodic telemetry ingestion scheduler.
+api.py — IRL (In Real Life) Real-Time NOAA SWPC Satellite Observatory & RL API
+================================================================================
+Locks stream positioning to Real-World UTC Clock Time (IRL), serving the latest
+satellite observation records ending right now from NOAA SWPC GOES-16/18.
 """
 
 import os
@@ -71,15 +69,15 @@ def load_data_and_model():
 load_data_and_model()
 
 async def periodic_noaa_refresher():
-    """Periodically syncs fresh NOAA 7-day telemetry every 15 minutes."""
+    """Periodically fetches fresh NOAA SWPC telemetry every 5 minutes for IRL real-time alignment."""
     while True:
-        await asyncio.sleep(900)
+        await asyncio.sleep(300) # Every 5 minutes for strict real-time accuracy
         try:
-            print("[BACKGROUND TASK] Syncing fresh NOAA SWPC 7-day telemetry...")
+            print("[BACKGROUND TASK] Fetching fresh NOAA SWPC satellite telemetry for IRL alignment...")
             await asyncio.to_thread(run_fetch_pipeline)
             await asyncio.to_thread(process_feature_engineering)
             await asyncio.to_thread(load_data_and_model)
-            print("[BACKGROUND TASK] Data and model refreshed.")
+            print("[BACKGROUND TASK] IRL Telemetry dataset reloaded successfully.")
         except Exception as e:
             print(f"[BACKGROUND TASK] Sync error: {e}")
 
@@ -88,7 +86,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(periodic_noaa_refresher())
     yield
 
-app = FastAPI(title="Project Hail Empirical NOAA RL Space Weather API", version="7.0.0", lifespan=lifespan)
+app = FastAPI(title="Project Hail IRL Real-Time NOAA RL Space Weather API", version="8.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,28 +96,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-REAL_START_TIME = time.time()
-START_INDEX = 0
-SAMPLES_PER_SECOND = 1.0
-
 y_true_history = []
 y_pred_history = []
 probs_history = []
 latency_history = []
 
-def get_current_idx():
-    global REAL_START_TIME, START_INDEX
+def get_current_irl_idx():
+    """Returns the index corresponding to the latest real-world satellite record in IRL."""
     if _df.empty: return 0
-    elapsed_seconds = time.time() - REAL_START_TIME
-    idx = START_INDEX + int(elapsed_seconds * SAMPLES_PER_SECOND)
-    if idx >= len(_df):
-        REAL_START_TIME = time.time()
-        START_INDEX = 0
-        return 0
-    return idx
+    # Return the absolute latest real-time record in the dataset (IRL NOW)
+    return len(_df) - 1
 
 def calculate_empirical_metrics():
-    if len(y_true_history) < 10:
+    if len(y_true_history) < 5:
         return {
             "precision": 1.0,
             "recall": 1.0,
@@ -133,12 +122,10 @@ def calculate_empirical_metrics():
     y_p = np.array(y_pred_history[-300:])
     probs_arr = np.array(probs_history[-300:])
     
-    # Empirical Metrics Calculation using Scikit-Learn
     prec = float(precision_score(y_t, y_p, average='weighted', zero_division=1.0))
     rec = float(recall_score(y_t, y_p, average='weighted', zero_division=1.0))
     f1 = float(f1_score(y_t, y_p, average='weighted', zero_division=1.0))
     
-    # Empirical True Skill Statistic (TSS = TPR - FPR)
     pos_mask = (y_t >= 1)
     neg_mask = (y_t == 0)
     
@@ -154,7 +141,6 @@ def calculate_empirical_metrics():
         
     tss = float(tpr - fpr)
     
-    # Empirical Logarithmic Loss
     try:
         if probs_arr.shape[1] == 4 and len(np.unique(y_t)) > 1:
             loss_val = float(log_loss(y_t, probs_arr, labels=[0, 1, 2, 3]))
@@ -215,7 +201,7 @@ def generate_solar_insights():
 def get_live_status():
     if _df.empty: return {"error": "No 7-day NOAA dataset loaded"}
     
-    idx = get_current_idx()
+    idx = get_current_irl_idx()
     row = _df.iloc[idx]
     
     x_vec = row[feature_cols].fillna(0).values.astype(np.float64)
@@ -254,7 +240,7 @@ def get_live_status():
         "timestamp": str(row['timestamp']),
         "current_idx": idx,
         "total_rows": len(_df),
-        "stream_source": "NOAA GOES-16/18 Primary 7-Day Feed (Syncs Every 15m)",
+        "stream_source": "IRL Real-Time NOAA GOES-16/18 Satellite Stream (5-Min Live Sync)",
         "RiskLabel": risk_label,
         "PredictedClass": pred_res["pred_class"],
         "CProb": round(pred_res["c_prob"], 4),
@@ -274,7 +260,7 @@ def get_live_status():
 
 def get_live_history(limit=80):
     if _df.empty: return []
-    curr_idx = get_current_idx()
+    curr_idx = get_current_irl_idx()
     start_idx = max(0, curr_idx - limit)
     sub = _df.iloc[start_idx : curr_idx + 1]
     
@@ -314,7 +300,7 @@ async def websocket_telemetry(websocket: WebSocket):
                 "history": hist
             }
             await websocket.send_text(json.dumps(payload))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0) # 1-second live heartbeat
     except (WebSocketDisconnect, Exception):
         pass
 
