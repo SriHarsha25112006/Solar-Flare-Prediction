@@ -449,58 +449,43 @@ export default function App() {
               {activeTab === 'monitor' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                   
-                  {/* Realtime Alert & Core Activity Radar Globe */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+                  {/* Realtime Alert & Core Activity Gauges */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '1.5rem', flexWrap: 'wrap' }}>
                     
-                    {/* Pulsing solar globe canvas */}
-                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-cyan)', height: '320px', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-                      <h3 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.4rem', letterSpacing: '1px' }}>
-                        📡 VECTOR CORONAL PLASMA VISUALIZER
+                    {/* Alert summary panel */}
+                    <div className="neon-panel" style={{ padding: '1.5rem', '--glow-color': 'var(--neon-purple)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <h3 style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                        CURRENT ALERT LEVEL
                       </h3>
-                      <div style={{ flex: 1, position: 'relative' }}>
-                        <SolarCoronaGlobe goesLongFlux={status.GOES_LONG_FLUX} volatility={status.hardness_ratio} />
+                      <div className="glow-text" style={{ fontSize: '3rem', fontWeight: 900, color: alertColor, '--glow-color': alertColor, marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+                        {status.RiskLabel}
+                      </div>
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.8rem', marginTop: '0.8rem' }}>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.2rem' }}>C / M / X SCALING PROBABILITY</span>
+                        <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>
+                          {Math.round(status.CProb * 100)}% / {Math.round(status.MProb * 100)}% / {Math.round(status.XProb * 100)}%
+                        </div>
                       </div>
                     </div>
 
-                    {/* Alert summary & radar rings gauges */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                      
-                      <div className="neon-panel" style={{ padding: '1.2rem', '--glow-color': 'var(--neon-purple)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <h3 style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                            CURRENT ALERT LEVEL
-                          </h3>
-                          <div className="glow-text" style={{ fontSize: '2.5rem', fontWeight: 900, color: alertColor, '--glow-color': alertColor, marginTop: '0.2rem' }}>
-                            {status.RiskLabel}
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>C / M / X PROB</span>
-                          <div style={{ fontSize: '1rem', fontWeight: 800, color: '#fff', marginTop: '0.4rem', fontFamily: 'var(--font-mono)' }}>
-                            {Math.round(status.CProb * 100)}% / {Math.round(status.MProb * 100)}% / {Math.round(status.XProb * 100)}%
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Heterogeneous ring gauges representing raw photon detector statistics */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <HolographicGauge 
-                          label="Soft X-Ray Activity" 
-                          value={`${(status.GOES_SHORT_FLUX * 1e7).toFixed(1)}`} 
-                          subtext="GOES-16 short band counts" 
-                          pct={Math.min(100, status.GOES_SHORT_FLUX * 1e7 * 10)} 
-                          color="var(--neon-cyan)" 
-                        />
-                        <HolographicGauge 
-                          label="Hardness Ratio" 
-                          value={`${status.hardness_ratio}`} 
-                          subtext="Coronal Spectral Hardness" 
-                          pct={Math.min(100, status.hardness_ratio * 1500)} 
-                          color="var(--neon-purple)" 
-                        />
-                      </div>
-
+                    {/* Heterogeneous ring gauges representing raw photon detector statistics */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                      <HolographicGauge 
+                        label="Soft X-Ray Activity" 
+                        value={`${(status.GOES_SHORT_FLUX * 1e7).toFixed(1)}`} 
+                        subtext="GOES-16 short band counts" 
+                        pct={Math.min(100, status.GOES_SHORT_FLUX * 1e7 * 10)} 
+                        color="var(--neon-cyan)" 
+                      />
+                      <HolographicGauge 
+                        label="Hardness Ratio" 
+                        value={`${status.hardness_ratio}`} 
+                        subtext="Coronal Spectral Hardness" 
+                        pct={Math.min(100, status.hardness_ratio * 1500)} 
+                        color="var(--neon-purple)" 
+                      />
                     </div>
+
                   </div>
 
                   {/* Primary Chart */}
