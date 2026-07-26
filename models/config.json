@@ -1,0 +1,38 @@
+{
+  "model_name": "Project Hail Online Adaptive Reinforcement Learning Agent",
+  "feature_cols": [
+    "SoLEXS_COUNTS",
+    "HEL1OS_COUNTS",
+    "GOES_XRAY_SHORT",
+    "GOES_XRAY_LONG",
+    "SOLAR_WIND_SPEED",
+    "IMF_BZ",
+    "PROTON_FLUX",
+    "SHARP_FREE_ENERGY",
+    "solexs_smooth",
+    "solexs_vel",
+    "solexs_accel",
+    "solexs_jerk",
+    "hel1os_smooth",
+    "hel1os_vel",
+    "hel1os_accel",
+    "hardness_ratio",
+    "sharp_energy_rate",
+    "solexs_qpp_var_20s",
+    "hel1os_volatility_1m"
+  ],
+  "horizons": [
+    "15m",
+    "30m",
+    "1h",
+    "2h",
+    "4h"
+  ],
+  "reward_structure": {
+    "correct_match": 1.0,
+    "false_positive": -1.0,
+    "missed_m_class": -1.5,
+    "missed_x_class": -2.5
+  },
+  "trained_timestamp": "2026-07-26 18:59:10"
+}

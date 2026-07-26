@@ -1,32 +1,22 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { motion } from 'framer-motion';
+import {
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine
+} from 'recharts';
 import './index.css';
 
+const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : '/api';
 
-const CustomTooltip = ({ active, payload, label, history, currentColor }) => {
+const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
-    const item = history.find(h => h.time === label);
-    const fullDate = item ? item.fullDate : label;
-    
     return (
-      <div 
-        className="hud-tooltip" 
-        style={{ 
-          '--tooltip-border': currentColor,
-          '--tooltip-glow': currentColor,
-          borderColor: currentColor
-        }}
-      >
-        <div className="hud-tooltip-title">{fullDate}</div>
+      <div className="glass-panel" style={{ padding: '0.8rem 1rem', background: 'rgba(5, 5, 12, 0.95)', border: '1px solid rgba(255, 255, 255, 0.2)' }}>
+        <p style={{ color: '#8b9bb4', fontSize: '0.8rem', marginBottom: '0.4rem', fontFamily: 'var(--font-mono)' }}>Time: {label}</p>
         {payload.map((entry, index) => (
-          <div key={index} className="hud-tooltip-row" style={{ color: entry.color }}>
-            <span className="hud-tooltip-label">{entry.name}</span>
-            <span className="hud-tooltip-value">
-              {entry.value.toFixed(1)} <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>cps</span>
-            </span>
-          </div>
+          <p key={index} style={{ color: entry.color, fontSize: '0.85rem', margin: '0.2rem 0', fontWeight: 600 }}>
+            {entry.name}: {typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value}
+          </p>
         ))}
       </div>
     );
@@ -34,345 +24,200 @@ const CustomTooltip = ({ active, payload, label, history, currentColor }) => {
   return null;
 };
 
-const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : '/api';
-
-function App() {
+export default function App() {
   const [status, setStatus] = useState(null);
   const [history, setHistory] = useState([]);
-  const [recentFlares, setRecentFlares] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [optimisticSpeed, setOptimisticSpeed] = useState(null);
-  const [showSoLEXS, setShowSoLEXS] = useState(true);
-  const [showHEL1OS, setShowHEL1OS] = useState(true);
   
-  // Decoupled time warp inputs
-  const [manualWarpTime, setManualWarpTime] = useState('');
-  const [manualWarpText, setManualWarpText] = useState('');
-  const hasInitializedWarpRef = useRef(false);
-  
-  // Audio state
+  // Stream & Model Control States
+  const [activeSource, setActiveSource] = useState('fused_multimodal');
+  const [speed, setSpeed] = useState('10x');
+  const [isLearningFrozen, setIsLearningFrozen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(() => {
     try {
       const saved = localStorage.getItem('projecthail_sound_enabled');
-      return saved ? JSON.parse(saved) : false;
+      return saved ? JSON.parse(saved) : true;
     } catch {
-      return false;
+      return true;
     }
   });
 
+  // Channel Visibility Toggles
+  const [showSoLEXS, setShowSoLEXS] = useState(true);
+  const [showHEL1OS, setShowHEL1OS] = useState(true);
+  const [showGOES, setShowGOES] = useState(true);
+  const [showWind, setShowWind] = useState(false);
+
   const prevRiskRef = useRef('');
+  const wsRef = useRef(null);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('projecthail_sound_enabled', JSON.stringify(soundEnabled));
-    } catch (e) {
-      console.warn("localStorage write blocked:", e);
-    }
-  }, [soundEnabled]);
-
-  const playConsoleSound = (type) => {
+  // Audio Announcer & Siren Synthesizer
+  const playAudioAlert = useCallback((type) => {
     if (!soundEnabled) return;
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      
       osc.connect(gain);
       gain.connect(audioCtx.destination);
-      
-      if (type === 'hover') {
+
+      if (type === 'click') {
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.005, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.05);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.05);
-      } else if (type === 'click') {
-        osc.type = 'triangle';
         osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.08);
-        gain.gain.setValueAtTime(0.025, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
         osc.start();
-        osc.stop(audioCtx.currentTime + 0.08);
-      } else if (type === 'warp') {
+        osc.stop(audioCtx.currentTime + 0.04);
+      } else if (type === 'siren') {
         osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(180, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(950, audioCtx.currentTime + 0.22);
-        gain.gain.setValueAtTime(0.035, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.22);
+        osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.4);
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
         osc.start();
-        osc.stop(audioCtx.currentTime + 0.22);
+        osc.stop(audioCtx.currentTime + 0.4);
       }
-    } catch (e) {
-      console.warn("Audio error:", e);
+    } catch (e) {}
+  }, [soundEnabled]);
+
+  // Fetch REST Initial Status
+  const fetchData = useCallback(async () => {
+    try {
+      const [statusRes, historyRes] = await Promise.all([
+        axios.get(`${API_URL}/status`),
+        axios.get(`${API_URL}/history?limit=100`)
+      ]);
+      if (statusRes.data && !statusRes.data.error) {
+        setStatus(statusRes.data);
+        setActiveSource(statusRes.data.stream_source || 'fused_multimodal');
+        setIsLearningFrozen(statusRes.data.is_learning_frozen || false);
+      }
+      if (Array.isArray(historyRes.data)) {
+        setHistory(historyRes.data);
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error("Error fetching REST telemetry:", err);
+      setLoading(false);
     }
+  }, []);
+
+  // WebSockets Streaming Telemetry Engine
+  useEffect(() => {
+    fetchData();
+    const wsUrl = window.location.hostname === 'localhost'
+      ? 'ws://localhost:8000/ws/telemetry'
+      : `wss://${window.location.hostname}/ws/telemetry`;
+
+    wsRef.current = new WebSocket(wsUrl);
+    
+    wsRef.current.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'telemetry') {
+          setStatus(payload.status);
+          if (payload.status && payload.status.stream_source) {
+            setActiveSource(payload.status.stream_source);
+          }
+          if (Array.isArray(payload.history)) {
+            setHistory(payload.history);
+          }
+          setLoading(false);
+        }
+      } catch (e) {}
+    };
+
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, [fetchData]);
+
+  // Red Alert & TTS Sound Trigger Effect
+  useEffect(() => {
+    if (status && status.RiskLabel) {
+      const prevRisk = prevRiskRef.current;
+      if (status.RiskLabel !== prevRisk) {
+        prevRiskRef.current = status.RiskLabel;
+        if (status.RiskLabel === 'X-CLASS') {
+          playAudioAlert('siren');
+          document.body.classList.add('red-alert');
+          if (soundEnabled && 'speechSynthesis' in window) {
+            const utt = new SpeechSynthesisUtterance("Warning! Extreme X-class solar flare trigger detected.");
+            utt.rate = 1.0;
+            window.speechSynthesis.speak(utt);
+          }
+        } else {
+          document.body.classList.remove('red-alert');
+        }
+      }
+    }
+  }, [status, soundEnabled, playAudioAlert]);
+
+  // Save Audio Setting
+  useEffect(() => {
+    localStorage.setItem('projecthail_sound_enabled', JSON.stringify(soundEnabled));
+  }, [soundEnabled]);
+
+  // Interactive Endpoint Handlers
+  const handleForceFlare = async (flareClass) => {
+    playAudioAlert('click');
+    try {
+      await axios.post(`${API_URL}/force_flare?flare_class=${flareClass}`);
+      fetchData();
+    } catch (e) {}
   };
 
-  const [warpPresets, setWarpPresets] = useState([]);
-  const [bookmarks, setBookmarks] = useState(() => {
+  const handleToggleLearning = async () => {
+    playAudioAlert('click');
     try {
-      const saved = localStorage.getItem('projecthail_bookmarks');
-      if (saved) return JSON.parse(saved);
-      return [
-        { name: "1. Massive X-Class Peak", timestamp: "2024-05-11 09:30:00" },
-        { name: "2. Historic X-Class Event", timestamp: "2024-05-09 17:30:00" },
-        { name: "3. Major X-Class Flare", timestamp: "2024-02-07 13:30:00" },
-        { name: "4. Severe X-Class Threat", timestamp: "2024-05-04 15:00:00" },
-        { name: "5. Extreme X-Class Spike", timestamp: "2024-05-14 10:00:00" }
-      ];
-    } catch {
-      return [];
-    }
-  });
-  const [bookmarkLabel, setBookmarkLabel] = useState('');
+      const res = await axios.post(`${API_URL}/toggle_learning`);
+      setIsLearningFrozen(res.data.is_learning_frozen);
+    } catch (e) {}
+  };
 
-  const exportCSV = () => {
+  const handleResetWeights = async () => {
+    playAudioAlert('click');
+    try {
+      await axios.post(`${API_URL}/reset_weights`);
+      fetchData();
+    } catch (e) {}
+  };
+
+  const handleSetSource = async (src) => {
+    playAudioAlert('click');
+    setActiveSource(src);
+    try {
+      await axios.post(`${API_URL}/set_stream_source?source=${src}`);
+      fetchData();
+    } catch (e) {}
+  };
+
+  const handleSetSpeed = async (sp) => {
+    playAudioAlert('click');
+    setSpeed(sp);
+    try {
+      await axios.post(`${API_URL}/set_speed?speed=${sp}`);
+    } catch (e) {}
+  };
+
+  const handleExportCSV = () => {
+    playAudioAlert('click');
     if (!history || history.length === 0) return;
-    const header = "Time,SoLEXS,HEL1OS\n";
-    const csvContent = history.map(row => `${row.fullDate},${row.SoLEXS},${row.HEL1OS}`).join("\n");
-    const blob = new Blob([header + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const header = "Time,SoLEXS,HEL1OS,GOES_XRAY,SOLAR_WIND\n";
+    const body = history.map(h => `${h.fullDate},${h.SoLEXS},${h.HEL1OS},${h.GOES || 0},${h.Wind || 0}`).join('\n');
+    const blob = new Blob([header + body], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `projecthail_export_${status?.timestamp?.replace(/[: ]/g, '_') || 'data'}.csv`);
+    link.setAttribute("download", `project_hail_telemetry_${status?.timestamp?.replace(/[: ]/g, '_') || 'live'}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const calculateDuration = () => {
-    if (!status || !status.EventStart || status.EventStart === 'N/A') return 'N/A';
-    try {
-      const start = new Date(status.EventStart.replace(' ', 'T') + 'Z').getTime();
-      let end;
-      if (status.EventEnd === 'Ongoing') {
-        end = new Date(status.timestamp.replace(' ', 'T') + 'Z').getTime();
-      } else if (status.EventEnd === 'Unknown' || status.EventEnd === 'N/A') {
-        return 'N/A';
-      } else {
-        end = new Date(status.EventEnd.replace(' ', 'T') + 'Z').getTime();
-      }
-      
-      const diffMs = end - start;
-      if (diffMs < 0) return '0s';
-      
-      const diffSecs = Math.floor(diffMs / 1000);
-      const mins = Math.floor(diffSecs / 60);
-      const secs = diffSecs % 60;
-      
-      if (mins > 0) {
-        return `${mins}m ${secs}s`;
-      }
-      return `${secs}s`;
-    } catch {
-      return 'N/A';
-    }
-  };
-
-  const fetchData = useCallback(async () => {
-    try {
-      const [statusRes, historyRes, recentRes] = await Promise.all([
-        axios.get(`${API_URL}/status`),
-        axios.get(`${API_URL}/history`),
-        axios.get(`${API_URL}/recent_flares`)
-      ]);
-      
-      const statusData = statusRes.data;
-      setStatus(statusData);
-      
-      // Initialize date inputs once when first loaded
-      if (statusData && statusData.timestamp && !hasInitializedWarpRef.current) {
-        setManualWarpTime(statusData.timestamp.replace(' ', 'T').slice(0, 16));
-        setManualWarpText(statusData.timestamp);
-        hasInitializedWarpRef.current = true;
-      }
-      
-      const safeRecentFlares = Array.isArray(recentRes.data) ? recentRes.data : [];
-      setRecentFlares(safeRecentFlares);
-      
-      const safeHistory = Array.isArray(historyRes.data) ? historyRes.data : [];
-      
-      // Format history with standard UTC parser mapping to user's view in IST
-      const formattedHistory = safeHistory.map(item => {
-        const date = new Date(item.timestamp.replace(' ', 'T') + 'Z');
-        return {
-          time: date.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute:'2-digit'}),
-          fullDate: date.toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST',
-          SoLEXS: item.SoLEXS_COUNTS,
-          HEL1OS: item.HEL1OS_COUNTS
-        };
-      });
-      setHistory(formattedHistory);
-    } catch (error) {
-      console.error("Error fetching data:", error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const handleTimeTravel = async (targetTime) => {
-    const timeToWarp = targetTime || manualWarpTime;
-    if (!timeToWarp) return;
-    try {
-      // setLoading(true); removed to prevent UI flash
-      // Format to YYYY-MM-DD HH:MM:00
-      const formattedTime = timeToWarp.replace('T', ' ').slice(0, 19);
-      const queryTime = formattedTime.includes(':') && formattedTime.length === 16 ? formattedTime + ':00' : formattedTime;
-      
-      await axios.post(`${API_URL}/set_time?timestamp=${encodeURIComponent(queryTime)}`);
-      
-      const cleanWarpTime = queryTime.replace(' ', 'T').slice(0, 16);
-      setManualWarpTime(cleanWarpTime);
-      setManualWarpText(queryTime);
-      
-      await fetchData();
-    } catch (error) {
-      console.error("Error warping time:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSetSpeed = async (speedVal) => {
-    try {
-      setOptimisticSpeed(speedVal);
-      await axios.post(`${API_URL}/set_speed?speed=${speedVal}`);
-      await fetchData();
-    } catch (err) {
-      console.error("Error setting speed:", err);
-    } finally {
-      setTimeout(() => setOptimisticSpeed(null), 500); // clear optimistic state
-    }
-  };
-
-  const addBookmark = () => {
-    if (!status || !status.timestamp) return;
-    playConsoleSound('click');
-    const label = bookmarkLabel.trim() || `Bookmark at ${status.timestamp.split(' ')[1]}`;
-    const newB = [...bookmarks, { name: label, timestamp: status.timestamp }];
-    setBookmarks(newB);
-    localStorage.setItem('projecthail_bookmarks', JSON.stringify(newB));
-    setBookmarkLabel('');
-  };
-
-  const removeBookmark = (idxToRemove) => {
-    playConsoleSound('click');
-    const newB = bookmarks.filter((_, idx) => idx !== idxToRemove);
-    setBookmarks(newB);
-    localStorage.setItem('projecthail_bookmarks', JSON.stringify(newB));
-  };
-
-  const playAlarmSound = useCallback(() => {
-    if (!soundEnabled) return;
-    try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc1 = audioCtx.createOscillator();
-      const osc2 = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      
-      osc1.type = 'sawtooth';
-      osc2.type = 'sine';
-      
-      osc1.frequency.setValueAtTime(880, audioCtx.currentTime);
-      osc1.frequency.linearRampToValueAtTime(440, audioCtx.currentTime + 0.45);
-      
-      osc2.frequency.setValueAtTime(440, audioCtx.currentTime);
-      osc2.frequency.linearRampToValueAtTime(220, audioCtx.currentTime + 0.45);
-      
-      gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
-      
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(audioCtx.destination);
-      
-      osc1.start();
-      osc2.start();
-      
-      osc1.stop(audioCtx.currentTime + 0.5);
-      osc2.stop(audioCtx.currentTime + 0.5);
-    } catch (e) {
-      console.warn("AudioContext block:", e);
-    }
-  }, [soundEnabled]);
-
-  useEffect(() => {
-    let isMounted = true;
-    
-    const fetchPresets = async () => {
-      try {
-        const res = await axios.get(`${API_URL}/warp_presets`);
-        if (isMounted && Array.isArray(res.data)) {
-          setWarpPresets(res.data);
-        }
-      } catch (err) {
-        console.error("Error fetching presets:", err);
-      }
-    };
-    
-    fetchPresets();
-    
-    const fetchLoop = async () => {
-      if (!isMounted) return;
-      await fetchData();
-      if (isMounted) setTimeout(fetchLoop, 2000); // 2s loop
-    };
-    
-    fetchLoop();
-    return () => { isMounted = false; };
-  }, [fetchData]);
-
-  useEffect(() => {
-    if (status && status.RiskLabel === 'X-CLASS') {
-      playAlarmSound();
-      const alarmInterval = setInterval(playAlarmSound, 5000);
-      return () => clearInterval(alarmInterval);
-    }
-  }, [status, soundEnabled, playAlarmSound]);
-
-  // Voice Announcer TTS Alert effect
-  useEffect(() => {
-    if (!status || !status.RiskLabel) return;
-    const prevRisk = prevRiskRef.current;
-    if (status.RiskLabel !== prevRisk) {
-      prevRiskRef.current = status.RiskLabel;
-      // Do not speak on initial render load to avoid disruptive greetings
-      if (soundEnabled && prevRisk) {
-        let message = "";
-        if (status.RiskLabel === 'X-CLASS') {
-          playConsoleSound('siren');
-          document.body.classList.add('red-alert');
-          message = "Warning! Catastrophic X-class solar flare initiation detected. Grid and satellite threats active.";
-        } else if (status.RiskLabel === 'M-CLASS') {
-          document.body.classList.remove('red-alert');
-          message = "Alert. High risk M-class solar flare detected. Degraded radio communications likely.";
-        } else if (status.RiskLabel === 'C-CLASS') {
-          document.body.classList.remove('red-alert');
-          message = "Moderate risk C-class solar flare activity detected.";
-        } else if (status.RiskLabel === 'NOMINAL' && prevRisk !== 'NOMINAL') {
-          document.body.classList.remove('red-alert');
-          message = "Solar telemetry returned to nominal state.";
-        }
-        if (message) {
-          try {
-            const utterance = new SpeechSynthesisUtterance(message);
-            utterance.volume = 0.85;
-            utterance.rate = 1.0;
-            window.speechSynthesis.speak(utterance);
-          } catch (e) {
-            console.warn("Speech synthesis blocked:", e);
-          }
-        }
-      }
-    }
-  }, [status, soundEnabled, playAlarmSound]);
-
-  if (loading || !status || status.error) {
+  if (loading || !status) {
     return (
       <div className="loading">
         <div className="spinner"></div>
-        <h2>{status && status.error ? "ERROR: " + status.error : "INITIALIZING PROJECT HAIL..."}</h2>
+        <h2>INITIALIZING PROJECT HAIL RL OBSERVATORY...</h2>
       </div>
     );
   }
@@ -383,1000 +228,335 @@ function App() {
     'M-CLASS': 'var(--neon-orange)',
     'X-CLASS': 'var(--neon-red)'
   };
-  
   const currentColor = classColors[status.RiskLabel] || classColors['NOMINAL'];
 
-  // CustomTooltip extracted
-
-  // Animation variants
   const containerVars = {
     hidden: { opacity: 0 },
-    show: { opacity: 1, transition: { staggerChildren: 0.1 } }
+    show: { opacity: 1, transition: { staggerChildren: 0.08 } }
   };
-  
+
   const itemVars = {
-    hidden: { y: 20, opacity: 0 },
-    show: { y: 0, opacity: 1, transition: { type: "spring", stiffness: 100 } }
-  };
-
-  // Determine animation theme based on risk level
-  const getThemeClass = (risk) => {
-    switch(risk) {
-      case 'X-CLASS': return 'theme-x-class';
-      case 'M-CLASS': return 'theme-m-class';
-      case 'C-CLASS': return 'theme-c-class';
-      default: return 'theme-nominal';
-    }
-  };
-
-  const themeClass = getThemeClass(status.RiskLabel);
-
-  // Helper to format dates to IST
-  const formatIST = (dateString) => {
-    if (!dateString || dateString === 'N/A' || dateString === 'Ongoing' || dateString === 'Unknown') return dateString;
-    try {
-      return new Date(dateString).toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit'});
-    } catch {
-      return dateString;
-    }
+    hidden: { opacity: 0, y: 15 },
+    show: { opacity: 1, y: 0, transition: { duration: 0.4 } }
   };
 
   return (
     <>
       <video className="video-background" autoPlay loop muted playsInline>
-        <source src="/background.mp4" type="video/mp4" />
+        <source src="https://assets.mixkit.co/videos/preview/mixkit-sun-in-space-40076-large.mp4" type="video/mp4" />
       </video>
       <div className="video-overlay"></div>
       <div className="scanlines"></div>
 
       <motion.div className="dashboard" variants={containerVars} initial="hidden" animate="show">
+        {/* ────────────── HEADER & SYSTEM HUD ────────────── */}
         <motion.header className="glass-panel header" style={{ '--glow-color': currentColor }} variants={itemVars}>
-          <h1>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="5" />
-              <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
-            </svg>
-            PROJECT HAIL ENGINE
-          </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
-            <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 5px ${currentColor}` }}>
-              <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}, 0 0 24px ${currentColor}` }}></div>
-              SIMULATION ACTIVE ({status.SimulationSpeed}) / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()} of {status.total_rows?.toLocaleString()}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <h1>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="5" />
+                <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+              </svg>
+              PROJECT HAIL
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginLeft: '0.6rem', fontWeight: 400 }}>
+                Space Weather Observatory & Online RL Engine
+              </span>
+            </h1>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.2rem', flexWrap: 'wrap' }}>
+            <div className="live-indicator" style={{ color: currentColor, textShadow: `0 0 6px ${currentColor}` }}>
+              <div className="live-dot" style={{ backgroundColor: currentColor, boxShadow: `0 0 12px ${currentColor}` }}></div>
+              LIVE STREAM / {status.timestamp} / Sample: {status.current_idx?.toLocaleString()}
             </div>
+
+            <button
+              className="warp-btn"
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              style={{ padding: '0.35rem 0.8rem', fontSize: '0.8rem' }}
+            >
+              {soundEnabled ? '🔊 Audio ON' : '🔇 Audio Muted'}
+            </button>
           </div>
         </motion.header>
 
-        <div className="grid">
-          {/* SECTION 00: TEMPORAL WARP NAVIGATION DECK */}
-          <div className="section-container">
-            <div className="section-header-block">
-              <span className="section-number">00 //</span>
-              <h2 className="section-title-text">TEMPORAL WARP NAVIGATION DECK</h2>
-              <span className="section-line" style={{ background: currentColor }}></span>
+        {/* ────────────── STREAM SWITCHER & SPEED DECK ────────────── */}
+        <motion.div className="glass-panel" style={{ padding: '1rem 1.5rem', '--glow-color': currentColor }} variants={itemVars}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>STREAM SOURCE:</span>
+              {[
+                { id: 'fused_multimodal', label: '🌐 Multi-Modal Fused' },
+                { id: 'aditya_l1', label: '🛰️ Aditya-L1 (SoLEXS/HEL1OS)' },
+                { id: 'noaa_goes', label: '📡 NOAA GOES Live' },
+                { id: 'sdo_sharp', label: '🧲 SDO Active Region' }
+              ].map(src => (
+                <button
+                  key={src.id}
+                  className={`warp-btn ${activeSource === src.id ? 'warp-btn-primary' : ''}`}
+                  onClick={() => handleSetSource(src.id)}
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.7rem' }}
+                >
+                  {src.label}
+                </button>
+              ))}
             </div>
-            
-            <motion.div className="glass-panel temporal-warp-card" style={{ '--glow-color': currentColor }} variants={itemVars}>
-              {/* Left Column: Clock Display & Playback Speed */}
-              <div className="warp-column">
-                <div className="warp-clock-display">
-                  <span className="warp-clock-label">Simulated Time Clock</span>
-                  <div className="warp-clock-time">{status.timestamp ? status.timestamp.split(' ')[1] : '00:00:00'}</div>
-                  
-                  {/* Play/Pause & Speed Deck */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '100%', marginTop: '0.4rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.6rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                      <button 
-                        onClick={() => {
-                          playConsoleSound('click');
-                          handleSetSpeed(status.SimulationSpeed === '0x' ? '10x' : '0x');
-                        }}
-                        onMouseEnter={() => playConsoleSound('hover')}
-                        className="warp-btn"
-                        style={{
-                          background: status.SimulationSpeed === '0x' ? 'rgba(255,255,255,0.04)' : currentColor,
-                          color: status.SimulationSpeed === '0x' ? '#fff' : '#000',
-                          border: status.SimulationSpeed === '0x' ? '1px solid rgba(255,255,255,0.1)' : 'none',
-                          boxShadow: status.SimulationSpeed === '0x' ? 'none' : `0 0 10px ${currentColor}`,
-                          padding: '0.35rem 0.65rem',
-                          fontSize: '0.72rem',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                          borderRadius: '6px'
-                        }}
-                      >
-                        {status.SimulationSpeed === '0x' ? (
-                          <>
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            PLAY
-                          </>
-                        ) : (
-                          <>
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                            PAUSE
-                          </>
-                        )}
-                      </button>
-                      
-                      <span className="warp-clock-label" style={{ fontSize: '0.62rem' }}>SPEED: {status.SimulationSpeed}</span>
-                    </div>
 
-                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                      {['1x', '2x', '3x', '5x', '10x', '20x'].map(spd => (
-                        <button
-                          key={spd}
-                          onClick={() => {
-                            playConsoleSound('click');
-                            handleSetSpeed(spd);
-                          }}
-                          onMouseEnter={() => playConsoleSound('hover')}
-                          style={{
-                            background: status.SimulationSpeed === spd ? currentColor : 'rgba(255,255,255,0.02)',
-                            color: status.SimulationSpeed === spd ? '#000' : '#fff',
-                            border: status.SimulationSpeed === spd ? `1px solid ${currentColor}` : '1px solid rgba(255,255,255,0.06)',
-                            padding: '0.15rem 0.35rem',
-                            fontSize: '0.6rem',
-                            fontFamily: 'var(--font-mono)',
-                            cursor: 'pointer',
-                            borderRadius: '4px',
-                            fontWeight: 'bold',
-                            boxShadow: status.SimulationSpeed === spd ? `0 0 6px ${currentColor}aa` : 'none',
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          {spd}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>SPEED:</span>
+              {['1x', '5x', '10x', '20x'].map(sp => (
+                <button
+                  key={sp}
+                  className={`warp-btn ${speed === sp ? 'warp-btn-primary' : ''}`}
+                  onClick={() => handleSetSpeed(sp)}
+                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
+                >
+                  {sp}
+                </button>
+              ))}
+            </div>
+          </div>
+        </motion.div>
 
-                  <div className="warp-clock-bounds font-mono" style={{ marginTop: '0.6rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.6rem', width: '100%' }}>
-                    <div style={{ color: currentColor, fontWeight: 'bold' }}>DATE: {status.timestamp ? status.timestamp.split(' ')[0] : 'N/A'}</div>
-                    <div style={{ marginTop: '0.2rem', opacity: 0.6, fontSize: '0.62rem' }}>
-                      DATA MIN: {status.MinTimestamp || '2024-02-01 00:00:00'}<br/>
-                      DATA MAX: {status.MaxTimestamp || '2026-06-16 23:59:03'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Middle Column: Warp Controls */}
-              <div className="warp-column" style={{ justifyContent: 'center' }}>
-                <div className="warp-input-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '100%' }}>
-                  <span className="warp-clock-label" style={{ marginBottom: '0.1rem' }}>Manual Warp Coordinates</span>
-                  
-                  {/* Free-form Text Input */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                    <span className="font-mono" style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>COORDINATE ENTRY (TEXT)</span>
-                    <input 
-                      type="text" 
-                      className="warp-text-input"
-                      placeholder="YYYY-MM-DD HH:MM:SS"
-                      value={manualWarpText}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setManualWarpText(val);
-                        // Attempt to sync calendar input if the input matches YYYY-MM-DD HH:MM
-                        if (val.length >= 16) {
-                          const datePart = val.slice(0, 10);
-                          const timePart = val.slice(11, 16);
-                          if (datePart.match(/^\d{4}-\d{2}-\d{2}$/) && timePart.match(/^\d{2}:\d{2}$/)) {
-                            setManualWarpTime(`${datePart}T${timePart}`);
-                          }
-                        }
-                      }}
-                      onMouseEnter={() => playConsoleSound('hover')}
-                      style={{
-                        background: 'rgba(5, 5, 8, 0.45)',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: '6px',
-                        color: '#fff',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '0.72rem',
-                        padding: '0.45rem 0.65rem',
-                        width: '100%',
-                        outline: 'none',
-                        transition: 'border-color 0.2s ease',
-                        borderColor: currentColor + 'aa'
-                      }}
-                    />
-                  </div>
-
-                  {/* Calendar Date-Time Local Input */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                    <span className="font-mono" style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>COORDINATE SELECTOR (CALENDAR)</span>
-                    <input 
-                      type="datetime-local" 
-                      className="warp-datetime-input"
-                      value={manualWarpTime}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setManualWarpTime(val);
-                        if (val) {
-                          setManualWarpText(val.replace('T', ' ') + ':00');
-                        }
-                      }}
-                      onMouseEnter={() => playConsoleSound('hover')}
-                      min={status.MinTimestamp ? status.MinTimestamp.replace(' ', 'T').slice(0, 16) : '2024-02-01T00:00'}
-                      max={status.MaxTimestamp ? status.MaxTimestamp.replace(' ', 'T').slice(0, 16) : '2026-06-16T23:59'}
-                      style={{ '--glow-color': currentColor }}
-                    />
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="warp-action-buttons" style={{ display: 'flex', gap: '0.4rem', marginTop: '0.2rem' }}>
-
-                    <button 
-                      className="warp-btn" 
-                      onClick={exportCSV}
-                      style={{ '--glow-color': currentColor, flexGrow: 1, background: 'rgba(255, 255, 255, 0.1)' }}
-                    >
-                      Export CSV
-                    </button>
-
-                    <button 
-                      className="warp-btn warp-btn-primary" 
-                      onClick={() => {
-                        playConsoleSound('warp');
-                        handleTimeTravel(manualWarpText);
-                      }}
-                      style={{ '--glow-color': currentColor, flexGrow: 1 }}
-                    >
-                      Warp Jump
-                    </button>
-                    <button 
-                      className="warp-btn warp-btn-secondary" 
-                      onClick={() => {
-                        playConsoleSound('click');
-                        if (status && status.timestamp) {
-                          setManualWarpTime(status.timestamp.replace(' ', 'T').slice(0, 16));
-                          setManualWarpText(status.timestamp);
-                        }
-                      }}
-                      style={{ flexGrow: 1 }}
-                    >
-                      Sync with Clock
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: Presets & Bookmarks */}
-              <div className="warp-column" style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', maxHeight: '280px', overflowY: 'auto', paddingRight: '0.5rem' }}>
-                <div>
-                  <span className="warp-clock-label" style={{ marginBottom: '0.3rem', display: 'block' }}>Milestone Presets</span>
-                  <div className="warp-preset-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.4rem' }}>
-                    {warpPresets.map((preset, pIdx) => (
-                      <button 
-                        key={pIdx} 
-                        className="warp-preset-btn"
-                        onClick={() => {
-                          playConsoleSound('warp');
-                          handleTimeTravel(preset.timestamp);
-                        }}
-                        onMouseEnter={() => playConsoleSound('hover')}
-                        style={{ '--glow-color': currentColor, padding: '0.4rem 0.6rem' }}
-                      >
-                        <span className="warp-preset-name" style={{ fontSize: '0.68rem' }}>{preset.name}</span>
-                        <span className="warp-preset-desc" style={{ fontSize: '0.58rem' }}>{preset.timestamp.split(' ')[0]}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.6rem' }}>
-                  <span className="warp-clock-label" style={{ marginBottom: '0.3rem', display: 'block' }}>Saved Bookmarks</span>
-                  
-                  {/* Add Bookmark form */}
-                  <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.5rem' }}>
-                    <input 
-                      type="text" 
-                      placeholder="Bookmark name..."
-                      value={bookmarkLabel}
-                      onChange={(e) => setBookmarkLabel(e.target.value)}
-                      onMouseEnter={() => playConsoleSound('hover')}
-                      style={{
-                        background: 'rgba(5, 5, 8, 0.4)',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: '4px',
-                        color: '#fff',
-                        fontSize: '0.7rem',
-                        fontFamily: 'var(--font-main)',
-                        padding: '0.3rem 0.5rem',
-                        flexGrow: 1,
-                        outline: 'none'
-                      }}
-                    />
-                    <button 
-                      onClick={addBookmark}
-                      style={{
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        color: '#fff',
-                        borderRadius: '4px',
-                        fontSize: '0.7rem',
-                        padding: '0.3rem 0.6rem',
-                        fontWeight: 'bold',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseEnter={(e) => {
-                        playConsoleSound('hover');
-                        e.target.style.background = 'rgba(255,255,255,0.12)';
-                      }}
-                      onMouseLeave={(e) => e.target.style.background = 'rgba(255,255,255,0.06)'}
-                    >
-                      Save
-                    </button>
-                  </div>
-
-                  {/* Bookmarks List */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', maxHeight: '110px', overflowY: 'auto' }}>
-                    {bookmarks.length > 0 ? (
-                      bookmarks.map((bm, bmIdx) => (
-                        <div 
-                          key={bmIdx}
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            background: 'rgba(255,255,255,0.01)',
-                            border: '1px solid rgba(255,255,255,0.03)',
-                            padding: '0.35rem 0.65rem',
-                            borderRadius: '6px',
-                            gap: '0.5rem'
-                          }}
-                        >
-                          <div 
-                            onClick={() => {
-                              playConsoleSound('warp');
-                              handleTimeTravel(bm.timestamp);
-                            }}
-                            onMouseEnter={() => playConsoleSound('hover')}
-                            style={{ display: 'flex', flexDirection: 'column', flexGrow: 1, cursor: 'pointer', textAlign: 'left' }}
-                          >
-                            <span style={{ fontSize: '0.7rem', color: '#fff', fontWeight: '500' }}>{bm.name}</span>
-                            <span style={{ fontSize: '0.58rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{bm.timestamp}</span>
-                          </div>
-                          <button
-                            onClick={() => removeBookmark(bmIdx)}
-                            onMouseEnter={() => playConsoleSound('hover')}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'var(--neon-red)',
-                              cursor: 'pointer',
-                              fontSize: '0.85rem',
-                              padding: '0.1rem 0.3rem',
-                              opacity: 0.6,
-                              transition: 'opacity 0.2s ease'
-                            }}
-                            onMouseLeave={(e) => e.target.style.opacity = 0.6}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))
-                    ) : (
-                      <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>No saved coordinates yet.</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+        {/* ────────────── REAL-TIME MODEL PERFORMANCE & LATENCY METRICS ────────────── */}
+        <motion.div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.2rem' }} variants={itemVars}>
+          {/* Latency Gauge Card */}
+          <div className="glass-panel" style={{ padding: '1.2rem', '--glow-color': currentColor }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>INFERENCE LATENCY</span>
+              <span className="live-dot" style={{ backgroundColor: status.latency_ms < 5 ? '#00ff88' : '#ffea00' }}></span>
+            </div>
+            <div style={{ fontSize: '2.4rem', fontWeight: 900, color: status.latency_ms < 5 ? '#00ff88' : '#ffea00', fontFamily: 'var(--font-mono)' }}>
+              {status.latency_ms} <span style={{ fontSize: '1rem', color: 'var(--text-muted)', fontWeight: 400 }}>ms / pred</span>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+              Throughput: <strong>{status.simulation_speed}</strong> stream processing
+            </p>
           </div>
 
-          {/* SECTION 1: SYSTEM RISK MONITOR & SUN VISUALIZER */}
-          <div className="section-container">
-            <div className="section-header-block">
-              <span className="section-number">01 //</span>
-              <h2 className="section-title-text">SYSTEM STATUS MONITOR</h2>
-              <span className="section-line" style={{ background: currentColor }}></span>
-            </div>
-            
-            <motion.div className={`glass-panel status-card ${themeClass}`} style={{ '--glow-color': currentColor }} variants={itemVars}>
-              <div className="status-card-grid">
-                {/* Left Column: Risk details */}
-                <div className="status-info-col">
-                  <div className="status-label">CURRENT RISK LEVEL</div>
-                  <motion.div 
-                    key={status.RiskLabel}
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: "spring", bounce: 0.5 }}
-                    className="status-level" 
-                    style={{ color: currentColor }}
-                  >
-                    {status.RiskLabel}
-                  </motion.div>
-                  
-                  {status.RiskLabel !== 'NOMINAL' && (
-                     <motion.div 
-                       initial={{ opacity: 0, y: 10 }}
-                       animate={{ opacity: 1, y: 0 }}
-                       className="magnitude-level"
-                     >
-                       {status.MagnitudeString}
-                     </motion.div>
-                  )}
-                  
-                  <div className="risk-assessment" style={{ color: currentColor }}>
-                    {status.RiskLabel === 'X-CLASS' ? 'CATASTROPHIC — GRID/SATELLITE THREAT!' :
-                     status.RiskLabel === 'M-CLASS' ? 'HIGH RISK — DEGRADED COMMS/GPS LIKELY' :
-                     status.RiskLabel === 'C-CLASS' ? 'MODERATE RISK — MINOR DISRUPTIONS' :
-                     'NO SIGNIFICANT RISK DETECTED'}
-                  </div>
-
-                  {/* Audio Controls Toggle */}
-                  <div className="audio-control-hud">
-                    <button 
-                      onClick={() => {
-                        const nextVal = !soundEnabled;
-                        setSoundEnabled(nextVal);
-                        if (nextVal) {
-                          // Play test sound to confirm Web Audio initialized
-                          setTimeout(() => {
-                            try {
-                              const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                              const osc = audioCtx.createOscillator();
-                              const gain = audioCtx.createGain();
-                              osc.connect(gain);
-                              gain.connect(audioCtx.destination);
-                              osc.frequency.setValueAtTime(600, audioCtx.currentTime);
-                              gain.gain.setValueAtTime(0.015, audioCtx.currentTime);
-                              gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
-                              osc.start();
-                              osc.stop(audioCtx.currentTime + 0.1);
-                            } catch (err) { console.warn(err); }
-                          }, 50);
-                        }
-                      }} 
-                      className={`hud-audio-btn ${soundEnabled ? 'active' : ''}`}
-                      onMouseEnter={() => playConsoleSound('hover')}
-                      style={{ '--btn-color': currentColor }}
-                    >
-                      <span className="audio-icon" style={{ display: 'flex', alignItems: 'center' }}>
-                        {soundEnabled ? (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-                          </svg>
-                        ) : (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                            <line x1="23" y1="9" x2="17" y2="15"></line>
-                            <line x1="17" y1="9" x2="23" y2="15"></line>
-                          </svg>
-                        )}
-                      </span>
-                      <span>AUDIO SYSTEM: {soundEnabled ? 'ONLINE' : 'MUTED'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Right Column: Animated Sun Visualizer */}
-                <div className="status-sun-col">
-                  <div className="sun-visualizer-container">
-                    <svg className={`sun-svg ${status.RiskLabel}`} viewBox="0 0 100 100">
-                      <defs>
-                        <radialGradient id="sunGradient" cx="50%" cy="50%" r="50%">
-                          <stop offset="0%" stopColor="#fff" />
-                          <stop offset="60%" stopColor={currentColor} />
-                          <stop offset="100%" stopColor="transparent" />
-                        </radialGradient>
-                        <radialGradient id="coronaGradient" cx="50%" cy="50%" r="50%">
-                          <stop offset="70%" stopColor={currentColor} stopOpacity="0.45" />
-                          <stop offset="100%" stopColor={currentColor} stopOpacity="0" />
-                        </radialGradient>
-                        <filter id="sunGlow" x="-50%" y="-50%" width="200%" height="200%">
-                          <feGaussianBlur stdDeviation="5" result="blur" />
-                          <feMerge>
-                            <feMergeNode in="blur" />
-                            <feMergeNode in="SourceGraphic" />
-                          </feMerge>
-                        </filter>
-                      </defs>
-
-                      {/* Corona Ring */}
-                      <circle cx="50%" cy="50%" r="35" className="sun-corona" fill="url(#coronaGradient)" filter="url(#sunGlow)" />
-                      
-                      {/* Sun Core */}
-                      <circle cx="50%" cy="50%" r="22" className="sun-core" fill="url(#sunGradient)" filter="url(#sunGlow)" />
-
-                      {/* Flare Arcs / Magnetic Loops */}
-                      {status.RiskLabel !== 'NOMINAL' && (
-                        <>
-                          <path d="M 35 50 A 15 15 0 0 1 65 50" className="magnetic-loop loop-1" stroke={currentColor} strokeWidth="1.5" fill="none" />
-                          <path d="M 50 35 A 15 15 0 0 1 50 65" className="magnetic-loop loop-2" stroke={currentColor} strokeWidth="1.2" fill="none" />
-                        </>
-                      )}
-                      
-                      {/* X-Class Corona Eruptions */}
-                      {status.RiskLabel === 'X-CLASS' && (
-                        <>
-                          <line x1="50" y1="50" x2="20" y2="20" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-1" />
-                          <line x1="50" y1="50" x2="80" y2="80" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-2" />
-                          <line x1="50" y1="50" x2="80" y2="20" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-3" />
-                          <line x1="50" y1="50" x2="20" y2="80" stroke="var(--neon-red)" strokeWidth="2.5" className="eruption ray-4" />
-                        </>
-                      )}
-                    </svg>
-                    <div className="sun-scan-line"></div>
-                  </div>
-                </div>
+          {/* Model Metrics Card */}
+          <div className="glass-panel" style={{ padding: '1.2rem', '--glow-color': currentColor }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>ONLINE MODEL PERFORMANCE</span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.6rem', marginTop: '0.8rem' }}>
+              <div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>PRECISION</span>
+                <p style={{ fontSize: '1.2rem', fontWeight: 800, color: '#00ff88', fontFamily: 'var(--font-mono)' }}>
+                  {(status.metrics?.precision * 100).toFixed(1)}%
+                </p>
               </div>
-            </motion.div>
+              <div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>RECALL</span>
+                <p style={{ fontSize: '1.2rem', fontWeight: 800, color: '#33ccff', fontFamily: 'var(--font-mono)' }}>
+                  {(status.metrics?.recall * 100).toFixed(1)}%
+                </p>
+              </div>
+              <div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>F1 SCORE</span>
+                <p style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffea00', fontFamily: 'var(--font-mono)' }}>
+                  {status.metrics?.f1_score}
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.8rem', paddingTop: '0.4rem', borderTop: '1px solid rgba(255,255,255,0.08)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              <span>TSS: <strong style={{ color: '#fff' }}>{status.metrics?.tss}</strong></span>
+              <span>Online Loss: <strong style={{ color: '#ff3366' }}>{status.metrics?.online_loss}</strong></span>
+            </div>
           </div>
 
-          {/* SECTION 2: ADVANCED TELEMETRY METRICS */}
-          <div className="section-container">
-            <div className="section-header-block">
-              <span className="section-number">02 //</span>
-              <h2 className="section-title-text">ADVANCED EVENT METRICS</h2>
-              <span className="section-line" style={{ background: currentColor }}></span>
+          {/* Online RL Learning Status Card */}
+          <div className="glass-panel" style={{ padding: '1.2rem', '--glow-color': currentColor }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>RL ADAPTATION ENGINE</span>
+              <span className={`status-pill ${isLearningFrozen ? 'nominal' : 'warning'}`} style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem' }}>
+                {isLearningFrozen ? 'FROZEN' : 'ACTIVE LEARNING'}
+              </span>
             </div>
-            
-            <motion.div className="glass-panel event-metrics-panel" style={{ '--glow-color': currentColor }} variants={itemVars}>
-              <div className="chart-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                  <div className="chart-title" style={{ color: currentColor }}>PHYSICAL AND TEMPORAL METRICS</div>
-                  <span className="hud-tag" style={{ '--glow-color': currentColor }}>ANALYSIS-MODE: LIVE</span>
-                </div>
-                <div className={`status-badge ${status.EventStatus === 'ACTIVE' ? 'active-event' : 'nominal-event'}`} style={{ color: currentColor, border: `1px solid ${currentColor}`, padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem' }}>
-                  {status.EventStatus}
-                </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.6rem' }}>
+              <div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>WEIGHT UPDATES</span>
+                <p style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>
+                  {status.weight_updates?.toLocaleString()}
+                </p>
               </div>
-              
-              <div className="metrics-panel-layout">
-                {/* Left Column: Physical Analysis */}
-                <div className="metrics-column">
-                  <div className="column-title">PHYSICAL ANALYSIS</div>
-                  
-                  <div className="metric-sub-card" style={{ '--card-glow': currentColor }}>
-                    <div className="metric-icon" style={{ color: currentColor }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                      </svg>
-                    </div>
-                    <div className="metric-info">
-                      <span className="metric-label">Estimated Flux</span>
-                      <span className="metric-value font-mono">{status.WattsPerSqMeter} <span className="metric-unit">W/m²</span></span>
-                    </div>
-                  </div>
-
-                  <div className="metric-sub-card" style={{ '--card-glow': currentColor }}>
-                    <div className="metric-icon" style={{ color: currentColor }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-                        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                      </svg>
-                    </div>
-                    <div className="metric-info">
-                      <span className="metric-label">Peak Intensity</span>
-                      <span className="metric-value font-mono">
-                        {status.EstimatedPeakCounts !== undefined && status.EstimatedPeakCounts !== null ? status.EstimatedPeakCounts.toFixed(1) : 'N/A'} <span className="metric-unit">cps</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="sensor-feeds-widget">
-                    <div className="sensor-sub-card" style={{ borderLeft: '3px solid #00d2ff' }}>
-                      <span className="sensor-label">SoLEXS Feed</span>
-                      <span className="sensor-value font-mono" style={{ color: '#00d2ff' }}>
-                        {status.SoLEXS_COUNTS ? status.SoLEXS_COUNTS.toFixed(1) : '0.0'} <span className="sensor-unit">cps</span>
-                      </span>
-                    </div>
-                    <div className="sensor-sub-card" style={{ borderLeft: '3px solid #ff2a2a' }}>
-                      <span className="sensor-label">HEL1OS Feed</span>
-                      <span className="sensor-value font-mono" style={{ color: '#ff2a2a' }}>
-                        {status.HEL1OS_COUNTS ? status.HEL1OS_COUNTS.toFixed(1) : '0.0'} <span className="sensor-unit">cps</span>
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <div className="helios-notice" style={{ marginBottom: '0.8rem' }}>
-                    ⚡ <strong>HEL1OS Sensor Telemetry Note:</strong> HEL1OS counts are calibrated at 0.0 cps from Feb 1 to June 30, 2024. Active telemetry begins on July 1, 2024. Use the Warp Navigation panel (Section 00) to jump to July 2024 or later!
-                  </div>
-
-                  {/* Aditya-L1 Spacecraft Telemetry HUD */}
-                  <div className="spacecraft-telemetry-panel" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.8rem' }}>
-                    <div className="spacecraft-title font-mono" style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 'bold', marginBottom: '0.5rem', letterSpacing: '1px' }}>
-                      ADITYA-L1 CORE VEHICLE HEALTH
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem' }}>
-                      <div className="spacecraft-stat">
-                        <span className="sc-stat-label">L1 DISTANCE</span>
-                        <span className="sc-stat-value font-mono">{(1498200 + (status.current_idx % 200) * 5 - 500).toLocaleString()} km</span>
-                      </div>
-                      <div className="spacecraft-stat">
-                        <span className="sc-stat-label">SOLAR WIND</span>
-                        <span className="sc-stat-value font-mono">{(380 + (status.SoLEXS_COUNTS / 50) + Math.sin(status.current_idx / 10) * 15).toFixed(1)} km/s</span>
-                      </div>
-                      <div className="spacecraft-stat">
-                        <span className="sc-stat-label">MAG. FIELD (B)</span>
-                        <span className="sc-stat-value font-mono">{(6.2 + (status.SoLEXS_COUNTS / 200) + Math.cos(status.current_idx / 8) * 1.5).toFixed(1)} nT</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Column: Temporal Profile */}
-                <div className="metrics-column">
-                  <div className="column-title">TEMPORAL PROFILE</div>
-                  
-                  <div className="metric-sub-card" style={{ '--card-glow': 'rgba(255, 255, 255, 0.2)' }}>
-                    <div className="metric-icon" style={{ color: 'var(--text-muted)' }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" />
-                        <polyline points="12 6 12 12 16 14" />
-                      </svg>
-                    </div>
-                    <div className="metric-info">
-                      <span className="metric-label">Event Start (IST)</span>
-                      <span className="metric-value font-mono" style={{ fontSize: '1rem' }}>{formatIST(status.EventStart)}</span>
-                    </div>
-                  </div>
-
-                  <div className="metric-sub-card" style={{ '--card-glow': currentColor }}>
-                    <div className="metric-icon" style={{ color: currentColor }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M12 2L2 22h20L12 2zM12 9v4M12 17h.01" />
-                      </svg>
-                    </div>
-                    <div className="metric-info">
-                      <span className="metric-label">Peak Reached (IST)</span>
-                      <span className="metric-value font-mono" style={{ fontSize: '1rem', color: currentColor }}>{formatIST(status.EventPeak)}</span>
-                    </div>
-                  </div>
-
-                  <div className="metric-sub-card" style={{ '--card-glow': 'rgba(255, 255, 255, 0.2)' }}>
-                    <div className="metric-icon" style={{ color: 'var(--text-muted)' }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="m9 12 2 2 4-4" />
-                      </svg>
-                    </div>
-                    <div className="metric-info">
-                      <span className="metric-label">Event End (IST)</span>
-                      <span className="metric-value font-mono" style={{ fontSize: '1rem' }}>{formatIST(status.EventEnd)}</span>
-                    </div>
-                  </div>
-
-                  <div className="duration-card" style={{ borderLeft: `3px solid ${currentColor}` }}>
-                    <div className="duration-icon" style={{ color: currentColor }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="M12 6v6l4 2" />
-                      </svg>
-                    </div>
-                    <div className="duration-details">
-                      <span className="duration-label">ACTIVE DURATION:</span>
-                      <span className="duration-badge font-mono" style={{ 
-                        boxShadow: `0 0 8px ${currentColor}33`,
-                        border: `1px solid ${currentColor}`,
-                        color: currentColor
-                      }}>{calculateDuration()}</span>
-                    </div>
-                  </div>
-                </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>CUMULATIVE REWARD</span>
+                <p style={{ fontSize: '1.4rem', fontWeight: 800, color: status.cumulative_reward >= 0 ? '#00ff88' : '#ff3366', fontFamily: 'var(--font-mono)' }}>
+                  {status.cumulative_reward}
+                </p>
               </div>
-            </motion.div>
+            </div>
+            <div style={{ marginTop: '0.6rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.2rem' }}>
+                <span>Reward step: {status.reward > 0 ? `+${status.reward}` : status.reward}</span>
+                <span>Hardness Ratio: {status.hardness_ratio}</span>
+              </div>
+            </div>
           </div>
 
-          {/* SECTION 3: ORBITAL RADIATIVE LOG */}
-          <div className="section-container">
-            <div className="section-header-block">
-              <span className="section-number">03 //</span>
-              <h2 className="section-title-text">ORBITAL RADIATIVE FLUX LOG</h2>
-              <span className="section-line"></span>
+          {/* Flare Risk Level Card */}
+          <div className="glass-panel" style={{ padding: '1.2rem', '--glow-color': currentColor, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>CURRENT FLARE THREAT</span>
+            <div style={{ fontSize: '2rem', fontWeight: 900, color: currentColor, marginTop: '0.4rem', textShadow: `0 0 12px ${currentColor}` }}>
+              {status.RiskLabel}
             </div>
-            
-            <motion.div className="glass-panel charts-panel" style={{ '--glow-color': currentColor }} variants={itemVars}>
-              <div className="chart-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                  <div className="chart-title">24H TELEMETRY LOG</div>
-                  <span className="hud-tag" style={{ '--glow-color': '#00d2ff' }}>TELEM-FEED: SECURE</span>
-                </div>
-                
-                {/* Dynamic Sensor Toggles */}
-                <div className="sensor-toggles" style={{ display: 'flex', gap: '1rem' }}>
-                  <button 
-                    className={`sensor-toggle-btn solexs-btn ${showSoLEXS ? 'active' : ''}`}
-                    onClick={() => {
-                      playConsoleSound('click');
-                      setShowSoLEXS(!showSoLEXS);
-                    }}
-                    onMouseEnter={() => playConsoleSound('hover')}
-                    style={{
-                      background: showSoLEXS ? 'rgba(0, 210, 255, 0.15)' : 'rgba(255,255,255,0.02)',
-                      border: showSoLEXS ? '1px solid #00d2ff' : '1px solid rgba(255,255,255,0.08)',
-                      color: showSoLEXS ? '#00d2ff' : 'var(--text-muted)',
-                      boxShadow: showSoLEXS ? '0 0 8px rgba(0, 210, 255, 0.3)' : 'none',
-                      padding: '0.4rem 0.8rem',
-                      borderRadius: '6px',
-                      fontSize: '0.75rem',
-                      fontFamily: 'var(--font-mono)',
-                      cursor: 'pointer',
-                      transition: 'all 0.3s ease',
-                      fontWeight: '700'
-                    }}
-                  >
-                    SOLEXS {showSoLEXS ? 'ON' : 'OFF'}
-                  </button>
-                  <button 
-                    className={`sensor-toggle-btn hel1os-btn ${showHEL1OS ? 'active' : ''}`}
-                    onClick={() => {
-                      playConsoleSound('click');
-                      setShowHEL1OS(!showHEL1OS);
-                    }}
-                    onMouseEnter={() => playConsoleSound('hover')}
-                    style={{
-                      background: showHEL1OS ? 'rgba(255, 42, 42, 0.15)' : 'rgba(255,255,255,0.02)',
-                      border: showHEL1OS ? '1px solid #ff2a2a' : '1px solid rgba(255,255,255,0.08)',
-                      color: showHEL1OS ? '#ff2a2a' : 'var(--text-muted)',
-                      boxShadow: showHEL1OS ? '0 0 8px rgba(255, 42, 42, 0.3)' : 'none',
-                      padding: '0.4rem 0.8rem',
-                      borderRadius: '6px',
-                      fontSize: '0.75rem',
-                      fontFamily: 'var(--font-mono)',
-                      cursor: 'pointer',
-                      transition: 'all 0.3s ease',
-                      fontWeight: '700'
-                    }}
-                  >
-                    HEL1OS {showHEL1OS ? 'ON' : 'OFF'}
-                  </button>
-                </div>
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '0.6rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <span>C: <strong style={{ color: '#ffea00' }}>{(status.CProb * 100).toFixed(0)}%</strong></span>
+              <span>M: <strong style={{ color: 'var(--neon-orange)' }}>{(status.MProb * 100).toFixed(0)}%</strong></span>
+              <span>X: <strong style={{ color: 'var(--neon-red)' }}>{(status.XProb * 100).toFixed(0)}%</strong></span>
+            </div>
+          </div>
+        </motion.div>
 
-                <div className="chart-stats">
-                  <div className="stat-item">
-                    <span className="stat-label">Peak SoLEXS</span>
-                    <span className="stat-value" style={{ color: '#00d2ff' }}>{status.SoLEXS_COUNTS.toFixed(1)} cps</span>
+        {/* ────────────── REAL-TIME TELEMETRY STREAM CHART ────────────── */}
+        <motion.div className="glass-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }} variants={itemVars}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
+            <div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 800 }}>LIVE MULTI-CHANNEL TELEMETRY STREAM</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Real-time SoLEXS soft X-ray, HEL1OS hard X-ray, GOES flux & solar wind signals</p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                className={`warp-btn ${showSoLEXS ? 'warp-btn-primary' : ''}`}
+                onClick={() => setShowSoLEXS(!showSoLEXS)}
+                style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+              >
+                {showSoLEXS ? '✓ SoLEXS' : 'SoLEXS'}
+              </button>
+              <button
+                className={`warp-btn ${showHEL1OS ? 'warp-btn-primary' : ''}`}
+                onClick={() => setShowHEL1OS(!showHEL1OS)}
+                style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+              >
+                {showHEL1OS ? '✓ HEL1OS' : 'HEL1OS'}
+              </button>
+              <button
+                className={`warp-btn ${showGOES ? 'warp-btn-primary' : ''}`}
+                onClick={() => setShowGOES(!showGOES)}
+                style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+              >
+                {showGOES ? '✓ GOES X-ray' : 'GOES X-ray'}
+              </button>
+              <button
+                className={`warp-btn ${showWind ? 'warp-btn-primary' : ''}`}
+                onClick={() => setShowWind(!showWind)}
+                style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+              >
+                {showWind ? '✓ Solar Wind' : 'Solar Wind'}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ height: '320px', width: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={history} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="solexsGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ff3366" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="#ff3366" stopOpacity={0.0}/>
+                  </linearGradient>
+                  <linearGradient id="heliosGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#33ccff" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="#33ccff" stopOpacity={0.0}/>
+                  </linearGradient>
+                  <linearGradient id="goesGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ffea00" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#ffea00" stopOpacity={0.0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="time" stroke="#8b9bb4" fontSize={11} tickLine={false} />
+                <YAxis stroke="#8b9bb4" fontSize={11} tickLine={false} scale="log" domain={[1, 'auto']} allowDataOverflow />
+                <Tooltip content={<CustomTooltip />} />
+                <ReferenceLine y={200} stroke="#ff2a2a" strokeDasharray="4 4" label={{ value: "ALERT THRESHOLD (200 cps)", fill: "#ff2a2a", fontSize: 10 }} />
+                {showSoLEXS && <Area type="monotone" dataKey="SoLEXS" name="SoLEXS (cps)" stroke="#ff3366" strokeWidth={2} fillOpacity={1} fill="url(#solexsGrad)" />}
+                {showHEL1OS && <Area type="monotone" dataKey="HEL1OS" name="HEL1OS (cps)" stroke="#33ccff" strokeWidth={2} fillOpacity={1} fill="url(#heliosGrad)" />}
+                {showGOES && <Area type="monotone" dataKey="GOES" name="GOES Flux (W/m² x10⁶)" stroke="#ffea00" strokeWidth={1.5} fillOpacity={1} fill="url(#goesGrad)" />}
+                {showWind && <Area type="monotone" dataKey="Wind" name="Solar Wind (km/s)" stroke="#00ff88" strokeWidth={1.5} fillOpacity={0.1} />}
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </motion.div>
+
+        {/* ────────────── MULTI-HORIZON AI FORECAST CARDS ────────────── */}
+        <motion.div variants={itemVars}>
+          <h3 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '1rem' }}>AI MULTI-HORIZON PREDICTIVE LOOKAHEAD</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+            {['15m', '30m', '1h', '2h', '4h'].map(h => {
+              const hData = status.horizons?.[h] || { risk: 'NOMINAL', prob: 0.05 };
+              const hColor = classColors[hData.risk] || classColors['NOMINAL'];
+              return (
+                <div key={h} className="glass-panel" style={{ padding: '1.2rem', '--glow-color': hColor }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, fontFamily: 'var(--font-mono)' }}>T + {h}</span>
+                    <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '4px', background: `${hColor}22`, color: hColor, fontWeight: 700 }}>
+                      {hData.risk}
+                    </span>
                   </div>
-                  <div className="stat-item">
-                    <span className="stat-label">Peak HEL1OS</span>
-                    <span className="stat-value" style={{ color: '#ff2a2a' }}>{status.HEL1OS_COUNTS.toFixed(1)} cps</span>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 900, color: hColor, margin: '0.4rem 0', fontFamily: 'var(--font-mono)' }}>
+                    {(hData.prob * 100).toFixed(0)}%
+                  </div>
+                  <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>X-Class Flare Probability</p>
+                  <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', marginTop: '0.6rem', overflow: 'hidden' }}>
+                    <div style={{ width: `${Math.min(100, hData.prob * 100)}%`, height: '100%', backgroundColor: hColor, transition: 'width 0.5s ease' }}></div>
                   </div>
                 </div>
-              </div>
-              
-              <div style={{ height: '280px', width: '100%', marginTop: '1rem' }}>
-                <ResponsiveContainer>
-                  <AreaChart data={history} margin={{ top: 15, right: 0, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorSoLEXS" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#00d2ff" stopOpacity={0.8}/>
-                        <stop offset="95%" stopColor="#00d2ff" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorHEL1OS" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#ff2a2a" stopOpacity={0.8}/>
-                        <stop offset="95%" stopColor="#ff2a2a" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="time" stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} minTickGap={40} />
-                    <YAxis stroke="var(--text-muted)" tick={{fontFamily: 'var(--font-mono)', fontSize: 11}} />
-                    <Tooltip 
-                      content={<CustomTooltip history={history} currentColor={currentColor} />} 
-                      isAnimationActive={false} 
-                      cursor={{ stroke: 'rgba(255, 255, 255, 0.12)', strokeWidth: 1 }} 
-                    />
-                    
-                    {/* Alert Threshold Line */}
-                    <ReferenceLine 
-                      y={200} 
-                      stroke="#ff2a2a" 
-                      strokeDasharray="4 4" 
-                      strokeOpacity={0.5} 
-                      label={{ 
-                        value: 'ALERT THRESHOLD (200 cps)', 
-                        fill: '#ff2a2a', 
-                        fontSize: 10, 
-                        fontFamily: 'var(--font-mono)', 
-                        position: 'top',
-                        dy: -4
-                      }} 
-                    />
-                    
-                    {showSoLEXS && <Area type="monotone" dataKey="SoLEXS" stroke="#00d2ff" strokeWidth={2} fillOpacity={1} fill="url(#colorSoLEXS)" />}
-                    {showHEL1OS && <Area type="monotone" dataKey="HEL1OS" stroke="#ff2a2a" strokeWidth={2} fillOpacity={1} fill="url(#colorHEL1OS)" />}
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </motion.div>
+              );
+            })}
           </div>
+        </motion.div>
 
-          {/* SECTION 4: AI FORECAST HORIZON */}
-          <div className="section-container">
-            <div className="section-header-block">
-              <span className="section-number">04 //</span>
-              <h2 className="section-title-text">AI FORECAST HORIZON</h2>
-              <span className="section-line" style={{ background: currentColor }}></span>
-            </div>
-            
-            <motion.div className="glass-panel forecast-horizon-panel" style={{ '--glow-color': currentColor, padding: '1.2rem' }} variants={itemVars}>
-              <div className="chart-header" style={{ marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                  <div className="chart-title" style={{ color: currentColor }}>PROACTIVE MULTI-HORIZON RISK MATRIX</div>
-                  <span className="hud-tag" style={{ '--glow-color': 'var(--neon-green)' }}>AI-MODEL: RF-ENSEMBLE-V3.1</span>
+        {/* ────────────── FEATURE WEIGHT IMPORTANCE BREAKDOWN ────────────── */}
+        {status.feature_weights && (
+          <motion.div className="glass-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }} variants={itemVars}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '0.8rem' }}>LIVE FEATURE WEIGHT IMPORTANCE (ONLINE AGENT)</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.8rem' }}>
+              {Object.entries(status.feature_weights).map(([feat, w]) => (
+                <div key={feat} style={{ background: 'rgba(255,255,255,0.03)', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.3rem' }}>
+                    <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{feat}</span>
+                    <span style={{ fontWeight: 700, color: currentColor }}>{(w * 100).toFixed(0)}%</span>
+                  </div>
+                  <div style={{ width: '100%', height: '3px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                    <div style={{ width: `${w * 100}%`, height: '100%', backgroundColor: currentColor, transition: 'width 0.4s ease' }}></div>
+                  </div>
                 </div>
-              </div>
-              <div className="forecast-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1.2rem', padding: '0.5rem 0' }}>
-                {[
-                  { key: '15m', label: '+15 MINUTES', offsetMin: 15 },
-                  { key: '30m', label: '+30 MINUTES', offsetMin: 30 },
-                  { key: '1h', label: '+1 HOUR', offsetMin: 60 },
-                  { key: '2h', label: '+2 HOURS', offsetMin: 120 },
-                  { key: '4h', label: '+4 HOURS', offsetMin: 240 }
-                ].map(h => {
-                  const f = status.FutureForecasts ? status.FutureForecasts[h.key] : null;
-                  if (!f) return null;
-                  
-                  const cardColor = classColors[f.RiskLabel] || classColors['NOMINAL'];
-                  const cardTheme = getThemeClass(f.RiskLabel);
-                  
-                  const targetTime = new Date(new Date(status.timestamp.replace(' ', 'T') + 'Z').getTime() + h.offsetMin * 60 * 1000);
-                  const targetTimeString = targetTime.toLocaleTimeString([], {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit'});
-                  
-                  return (
-                    <motion.div 
-                      key={h.key}
-                      whileHover={{ scale: 1.03 }}
-                      className={`forecast-card ${cardTheme}`}
-                      style={{ 
-                        '--forecast-glow': cardColor,
-                        background: 'rgba(5, 5, 8, 0.45)',
-                        border: '1px solid rgba(255, 255, 255, 0.05)',
-                        borderRadius: '12px',
-                        padding: '1.2rem',
-                        position: 'relative',
-                        overflow: 'hidden',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '0.8rem',
-                        transition: 'all 0.3s ease'
-                      }}
-                    >
-                      {/* Top Accent line for glow */}
-                      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '4px', background: cardColor, boxShadow: `0 0 10px ${cardColor}` }}></div>
-                      
-                      <div className="forecast-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span className="forecast-time-label" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.5px' }}>
-                          {h.label} <span style={{ color: 'rgba(255,255,255,0.45)', marginLeft: '4px' }}>({targetTimeString})</span>
-                        </span>
-                        <span className="forecast-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: cardColor, boxShadow: `0 0 8px ${cardColor}` }}></span>
-                      </div>
-                      
-                      <div className="forecast-card-body" style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                        <div className="forecast-risk-text" style={{ fontSize: '1.4rem', fontWeight: '900', color: cardColor, letterSpacing: '0.5px' }}>{f.RiskLabel}</div>
-                        <div className="forecast-mag-text font-mono" style={{ fontSize: '0.85rem', color: '#fff', opacity: 0.85 }}>{f.MagnitudeString || 'NOMINAL'}</div>
-                      </div>
-                      
-                      <div className="forecast-card-probs" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.6rem' }}>
-                        {[
-                          { lbl: 'SAFE', val: f.SafeProb, color: 'var(--neon-green)' },
-                          { lbl: 'C-CLS', val: f.CProb, color: '#ffea00' },
-                          { lbl: 'M-CLS', val: f.MProb, color: 'var(--neon-orange)' },
-                          { lbl: 'X-CLS', val: f.XProb, color: 'var(--neon-red)' }
-                        ].map(p => (
-                          <div key={p.lbl} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.62rem', fontFamily: 'var(--font-mono)' }}>
-                            <span style={{ width: '32px', color: 'var(--text-muted)' }}>{p.lbl}:</span>
-                            <div style={{ flexGrow: 1, height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
-                              <div style={{ width: `${p.val * 100}%`, height: '100%', backgroundColor: p.color, borderRadius: '2px' }}></div>
-                            </div>
-                            <span style={{ width: '24px', textAlign: 'right', color: '#fff' }}>{(p.val * 100).toFixed(0)}%</span>
-                          </div>
-                        ))}
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            </motion.div>
-          </div>
-
-          {/* SECTION 5: HISTORICAL EVENT RECORDER */}
-          <div className="section-container">
-            <div className="section-header-block">
-              <span className="section-number">05 //</span>
-              <h2 className="section-title-text">RECENT CATASTROPHIC EVENTS</h2>
-              <span className="section-line"></span>
+              ))}
             </div>
-            
-            <motion.div className="glass-panel recent-flares-panel" style={{ '--glow-color': currentColor }} variants={itemVars}>
-              <div className="chart-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                  <div className="chart-title">CATASTROPHIC EVENT LOG</div>
-                  <span className="hud-tag" style={{ '--glow-color': 'var(--neon-orange)' }}>HIST-RECORDER: STABLE</span>
-                </div>
-              </div>
-              {recentFlares.length > 0 ? (
-                <table className="flare-table">
-                  <thead>
-                    <tr>
-                      <th>Start Time (IST)</th>
-                      <th>End Time (IST)</th>
-                      <th>Class</th>
-                      <th>Magnitude</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentFlares.map((flare, idx) => {
-                      const isOngoing = flare.end === 'Ongoing';
-                      const formattedEnd = isOngoing ? 'Ongoing' : new Date(flare.end.replace(' ', 'T') + 'Z').toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST';
-                      return (
-                        <tr key={idx}>
-                          <td>{new Date(flare.start.replace(' ', 'T') + 'Z').toLocaleString('en-US', {timeZone: 'Asia/Kolkata'}) + ' IST'}</td>
-                          <td style={{ color: isOngoing ? 'var(--neon-red)' : 'var(--text-muted)', fontWeight: isOngoing ? 'bold' : 'normal' }}>
-                            {isOngoing ? (
-                              <span className="blink-fast" style={{ textShadow: '0 0 5px var(--neon-red)' }}>ONGOING</span>
-                            ) : (
-                              formattedEnd
-                            )}
-                          </td>
-                          <td>
-                            <span className="flare-badge" style={{ color: flare.class_level === 3 ? 'var(--neon-red)' : 'var(--neon-orange)' }}>
-                              {flare.class_level === 3 ? 'X-CLASS' : 'M-CLASS'}
-                            </span>
-                          </td>
-                          <td style={{ color: '#fff', fontWeight: 'bold' }}>{flare.magnitude}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              ) : (
-                <p style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>No recent catastrophic events detected.</p>
-              )}
-            </motion.div>
-          </div>
+          </motion.div>
+        )}
 
-          {/* SECTION 6: PROBABILITY INDEX MATRIX */}
-          <div className="section-container">
-            <div className="section-header-block">
-              <span className="section-number">06 //</span>
-              <h2 className="section-title-text">PROBABILITY INDEX MATRIX</h2>
-              <span className="section-line"></span>
-            </div>
-            
-            <motion.div className="probs-panel" variants={itemVars}>
-              <motion.div whileHover={{ scale: 1.03 }} className="glass-panel prob-card" style={{ '--glow-color': 'var(--neon-green)' }}>
-                <div className="prob-title">Nominal</div>
-                <div className="prob-value">{(status.SafeProb * 100).toFixed(2)}%</div>
-              </motion.div>
-              <motion.div whileHover={{ scale: 1.03 }} className="glass-panel prob-card" style={{ '--glow-color': '#ffea00' }}>
-                <div className="prob-title">C-Class</div>
-                <div className="prob-value">{(status.CProb * 100).toFixed(2)}%</div>
-              </motion.div>
-              <motion.div whileHover={{ scale: 1.03 }} className="glass-panel prob-card" style={{ '--glow-color': 'var(--neon-orange)' }}>
-                <div className="prob-title">M-Class</div>
-                <div className="prob-value">{(status.MProb * 100).toFixed(2)}%</div>
-              </motion.div>
-              <motion.div whileHover={{ scale: 1.03 }} className="glass-panel prob-card" style={{ '--glow-color': 'var(--neon-red)' }}>
-                <div className="prob-title">X-Class</div>
-                <div className="prob-value">{(status.XProb * 100).toFixed(2)}%</div>
-              </motion.div>
-            </motion.div>
+        {/* ────────────── INTERACTIVE TESTING & CONTROL DECK ────────────── */}
+        <motion.div className="glass-panel" style={{ padding: '1.5rem', '--glow-color': currentColor }} variants={itemVars}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '0.8rem' }}>INTERACTIVE ANOMALY INJECTION & MODEL CONTROLS</h3>
+          <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
+            <button className="warp-btn" onClick={() => handleForceFlare('C')} style={{ '--glow-color': '#ffea00' }}>
+              ⚡ Force C-Class Spike
+            </button>
+            <button className="warp-btn" onClick={() => handleForceFlare('M')} style={{ '--glow-color': 'var(--neon-orange)' }}>
+              🔥 Force M-Class Spike
+            </button>
+            <button className="warp-btn" onClick={() => handleForceFlare('X')} style={{ '--glow-color': 'var(--neon-red)' }}>
+              🚨 Force X-Class Flare Spike
+            </button>
+
+            <button
+              className={`warp-btn ${isLearningFrozen ? 'warp-btn-primary' : ''}`}
+              onClick={handleToggleLearning}
+              style={{ marginLeft: 'auto' }}
+            >
+              {isLearningFrozen ? '▶️ Unfreeze Online Learning' : '⏸️ Freeze Model Weights'}
+            </button>
+
+            <button className="warp-btn" onClick={handleResetWeights} style={{ background: 'rgba(255, 51, 102, 0.2)' }}>
+              🔄 Reset Agent Weights
+            </button>
+
+            <button className="warp-btn" onClick={handleExportCSV}>
+              📥 Export Telemetry CSV
+            </button>
           </div>
-        </div>
+        </motion.div>
       </motion.div>
-
-      {/* Live Ticker */}
-      <div className="ticker-container">
-        <div className="ticker-label">LIVE TELEMETRY</div>
-        <div className="ticker-content">
-          {[...Array(10)].map((_, i) => (
-            <div className="ticker-item" key={i}>
-              <span>SoLEXS FLUX:</span> <span className="ticker-highlight">{status.SoLEXS_COUNTS.toFixed(2)}</span> |
-              <span>HEL1OS FLUX:</span> <span className="ticker-highlight">{status.HEL1OS_COUNTS.toFixed(2)}</span> |
-              <span>PROB(X):</span> <span className="ticker-highlight">{(status.XProb * 100).toFixed(2)}%</span> |
-              <span>PEAK PRED:</span> <span className="ticker-highlight">{status.MagnitudeString}</span>
-            </div>
-          ))}
-        </div>
-      </div>
     </>
   );
 }
-
-export default App;
