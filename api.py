@@ -267,6 +267,8 @@ def get_live_status():
         "reward": round(reward, 2),
         "cumulative_reward": round(cum_reward, 1),
         "weight_updates": rl_agent.weight_update_count,
+        "weights": rl_agent.weights.tolist() if (hasattr(rl_agent, 'weights') and rl_agent.weights is not None) else [],
+        "feature_names": feature_cols,
         "metrics": metrics,
         "horizons": pred_res["horizons"],
         "insights": insights
