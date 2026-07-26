@@ -1,5 +1,5 @@
 {
-  "model_name": "Project Hail NOAA 7-Day Online Adaptive RL Agent",
+  "model_name": "Project Hail Multi-Horizon NOAA 7-Day RL Agent",
   "feature_cols": [
     "GOES_LONG_FLUX",
     "GOES_SHORT_FLUX",
@@ -21,11 +21,5 @@
     "2h",
     "4h"
   ],
-  "reward_structure": {
-    "correct_match": 1.0,
-    "false_positive": -1.0,
-    "missed_m_class": -1.5,
-    "missed_x_class": -2.5
-  },
-  "trained_timestamp": "2026-07-26 19:17:25"
+  "trained_timestamp": "2026-07-26 19:49:23"
 }
