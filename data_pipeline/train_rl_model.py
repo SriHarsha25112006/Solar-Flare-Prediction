@@ -1,8 +1,8 @@
 """
-train_rl_model.py — Online Adaptive Reinforcement Learning Model Trainer
-========================================================================
-Implements the OnlineAdaptiveAgent with online policy gradient weight adaptation,
-multi-horizon forecasting, reward optimization, and metric logging.
+train_rl_model.py — Real 7-Day NOAA Online Adaptive RL Model Trainer
+======================================================================
+Trains the OnlineAdaptiveAgent on 7-day NOAA GOES primary telemetry features,
+logging step-by-step weight updates, policy rewards, and metric targets.
 """
 
 import os
@@ -28,7 +28,6 @@ class OnlineAdaptiveAgent:
         self.feature_names = feature_names
         self.num_features = len(feature_names)
         
-        # Online SGD Multi-class Adaptive Classifier (expects float64 input)
         self.online_clf = SGDClassifier(
             loss='log_loss',
             penalty='l2',
@@ -38,12 +37,10 @@ class OnlineAdaptiveAgent:
         )
         self.classes = np.array([0, 1, 2, 3]) # Nominal, C, M, X
         
-        # Initial weights
         self.weights = np.ones(self.num_features, dtype=np.float64)
         self.bias = 0.0
         self.learning_rate = 0.01
         
-        # Performance Tracking
         self.cumulative_reward = 0.0
         self.weight_update_count = 0
         self.history_loss = []
@@ -59,15 +56,12 @@ class OnlineAdaptiveAgent:
     def predict(self, x_vector):
         start_time = time.perf_counter()
         
-        # Ensure 2D float64 input for sklearn SGDClassifier
         x_2d = np.array(x_vector, dtype=np.float64).reshape(1, -1)
         x_2d = np.nan_to_num(x_2d, nan=0.0, posinf=1e5, neginf=-1e5)
         
-        # Inference
         probs = self.online_clf.predict_proba(x_2d)[0]
         pred_class = int(np.argmax(probs))
         
-        # Align probabilities if missing classes
         full_probs = [0.0, 0.0, 0.0, 0.0]
         for i, c in enumerate(self.online_clf.classes_):
             if c < 4:
@@ -91,7 +85,6 @@ class OnlineAdaptiveAgent:
         x_2d = np.array(x_vector, dtype=np.float64).reshape(1, -1)
         x_2d = np.nan_to_num(x_2d, nan=0.0, posinf=1e5, neginf=-1e5)
         
-        # Predict before update
         pred_dict = self.predict(x_vector)
         pred_class = pred_dict["pred_class"]
         
@@ -107,27 +100,18 @@ class OnlineAdaptiveAgent:
         self.cumulative_reward += reward
         self.history_rewards.append(reward)
 
-        # Gradient Step Update
         self.online_clf.partial_fit(x_2d, [true_class])
         self.weight_update_count += 1
 
-        # Track weights adjustment
         if hasattr(self.online_clf, 'coef_'):
             self.weights = np.mean(np.abs(self.online_clf.coef_), axis=0).astype(np.float64)
-
-        if self.weight_update_count % 100 == 0:
-            self.weight_adaptation_log.append({
-                "update_count": self.weight_update_count,
-                "cumulative_reward": float(self.cumulative_reward),
-                "timestamp": time.time()
-            })
 
         return reward, float(self.cumulative_reward)
 
 def train_and_save_pipeline():
-    tqdm.write("[START] Online Adaptive RL Agent Training & Baseline Modeling...")
+    tqdm.write("[START] 7-Day NOAA Online RL Agent Training Pipeline...")
     
-    features_file = os.path.join(DATA_DIR, "features_multimodal.parquet")
+    features_file = os.path.join(DATA_DIR, "noaa_7day_features.parquet")
     if not os.path.exists(features_file):
         from data_pipeline.feature_engineering import process_feature_engineering
         process_feature_engineering()
@@ -135,11 +119,10 @@ def train_and_save_pipeline():
     df = pd.read_parquet(features_file)
     
     feature_cols = [
-        'SoLEXS_COUNTS', 'HEL1OS_COUNTS', 'GOES_XRAY_SHORT', 'GOES_XRAY_LONG',
-        'SOLAR_WIND_SPEED', 'IMF_BZ', 'PROTON_FLUX', 'SHARP_FREE_ENERGY',
-        'solexs_smooth', 'solexs_vel', 'solexs_accel', 'solexs_jerk',
-        'hel1os_smooth', 'hel1os_vel', 'hel1os_accel', 'hardness_ratio',
-        'sharp_energy_rate', 'solexs_qpp_var_20s', 'hel1os_volatility_1m'
+        'GOES_LONG_FLUX', 'GOES_SHORT_FLUX', 'SoLEXS_COUNTS', 'HEL1OS_COUNTS',
+        'goes_long_smooth', 'goes_long_vel', 'goes_long_accel',
+        'goes_short_smooth', 'goes_short_vel', 'goes_short_accel',
+        'hardness_ratio', 'long_flux_var_5m'
     ]
     
     tqdm.write(f"[STATS] Feature Set: {len(feature_cols)} physical signal channels")
@@ -147,24 +130,19 @@ def train_and_save_pipeline():
     X = df[feature_cols].fillna(0).values.astype(np.float64)
     y = df['PredictedClass'].values
     
-    # Initialize Online RL Agent
     agent = OnlineAdaptiveAgent(feature_names=feature_cols)
     
-    # Train online loop over timeline using tqdm progress
-    tqdm.write("[MODEL] Pre-training Online Adaptive Agent on Historical Multi-Modal Stream...")
-    sample_indices = np.random.choice(len(X), size=min(5000, len(X)), replace=False)
-    
-    for idx in tqdm(sample_indices, desc="RL Agent Weight Updates"):
+    tqdm.write("[MODEL] Sequential Training over 7-Day NOAA Telemetry Timeline...")
+    for idx in tqdm(range(len(X)), desc="Sequential NOAA RL Updates"):
         x_sample = X[idx]
         y_sample = y[idx]
         agent.update_online(x_sample, y_sample)
         
-    # Save agent model and configuration
     agent_path = os.path.join(MODELS_DIR, "rl_agent.pkl")
     joblib.dump(agent, agent_path)
     
     config = {
-        "model_name": "Project Hail Online Adaptive Reinforcement Learning Agent",
+        "model_name": "Project Hail NOAA 7-Day Online Adaptive RL Agent",
         "feature_cols": feature_cols,
         "horizons": ["15m", "30m", "1h", "2h", "4h"],
         "reward_structure": {
@@ -182,7 +160,7 @@ def train_and_save_pipeline():
         
     tqdm.write(f"[SAVE] Saved RL agent model to {agent_path}")
     tqdm.write(f"[SAVE] Saved configuration to {config_path}")
-    tqdm.write("[DONE] Online Adaptive Reinforcement Learning Agent Ready for Deployment!")
+    tqdm.write("[DONE] 7-Day NOAA Online RL Agent Ready for Deployment!")
     
     return agent
 

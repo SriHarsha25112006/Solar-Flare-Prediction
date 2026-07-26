@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { motion } from 'framer-motion';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts';
 import './index.css';
 
 const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : '/api';
@@ -11,14 +11,13 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isLearningFrozen, setIsLearningFrozen] = useState(false);
-  const [speed, setSpeed] = useState('10x');
   const wsRef = useRef(null);
 
   const fetchData = useCallback(async () => {
     try {
       const [statusRes, historyRes] = await Promise.all([
         axios.get(`${API_URL}/status`),
-        axios.get(`${API_URL}/history?limit=60`)
+        axios.get(`${API_URL}/history?limit=80`)
       ]);
       if (statusRes.data && !statusRes.data.error) {
         setStatus(statusRes.data);
@@ -56,13 +55,6 @@ export default function App() {
     };
   }, [fetchData]);
 
-  const handleForceFlare = async (cls) => {
-    try {
-      await axios.post(`${API_URL}/force_flare?flare_class=${cls}`);
-      fetchData();
-    } catch (e) {}
-  };
-
   const handleToggleLearning = async () => {
     try {
       const res = await axios.post(`${API_URL}/toggle_learning`);
@@ -77,18 +69,25 @@ export default function App() {
     } catch (e) {}
   };
 
-  const handleSetSpeed = async (sp) => {
-    setSpeed(sp);
-    try {
-      await axios.post(`${API_URL}/set_speed?speed=${sp}`);
-    } catch (e) {}
+  const handleExportCSV = () => {
+    if (!history || history.length === 0) return;
+    const header = "Time,GOES_Long_Flux_Wm2,GOES_Short_Flux_Wm2\n";
+    const body = history.map(h => `${h.fullDate},${h.GOES_Long},${h.GOES_Short}`).join('\n');
+    const blob = new Blob([header + body], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `noaa_7day_telemetry_${status?.timestamp?.replace(/[: ]/g, '_') || 'stream'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   if (loading || !status) {
     return (
       <div className="loading">
         <div className="spinner"></div>
-        <h2>LOADING REAL-TIME RL MODEL OBSERVATORY...</h2>
+        <h2>CONNECTING TO REAL 7-DAY NOAA GOES TELEMETRY STREAM...</h2>
       </div>
     );
   }
@@ -100,6 +99,13 @@ export default function App() {
     'X-CLASS': '#ff2a2a'
   };
   const currentColor = riskColors[status.RiskLabel] || '#00ff88';
+
+  const riskClassNames = {
+    0: 'NOMINAL',
+    1: 'C-CLASS',
+    2: 'M-CLASS',
+    3: 'X-CLASS'
+  };
 
   return (
     <div style={{ background: '#05050a', minHeight: '100vh', color: '#f0f4f8', padding: '2rem', fontFamily: "'Outfit', sans-serif" }}>
@@ -113,7 +119,7 @@ export default function App() {
               PROJECT HAIL
             </h1>
             <p style={{ color: '#8b9bb4', fontSize: '0.9rem', marginTop: '0.2rem' }}>
-              Real-Time Adaptive Reinforcement Learning Model Engine & Live Telemetry
+              Official Real 7-Day NOAA SWPC GOES-16/18 Primary Telemetry Stream & RL Model Evaluation
             </p>
           </div>
 
@@ -130,7 +136,7 @@ export default function App() {
         {/* SECTION 1: REAL-TIME MODEL PERFORMANCE METRICS */}
         <div>
           <h2 style={{ fontSize: '1rem', color: '#8b9bb4', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '1rem', fontWeight: 700 }}>
-            📊 REAL-TIME MODEL PERFORMANCE & LATENCY
+            📊 REAL-TIME MODEL PERFORMANCE ON 7-DAY NOAA STREAM
           </h2>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.2rem' }}>
@@ -141,7 +147,7 @@ export default function App() {
               <div style={{ fontSize: '2.2rem', fontWeight: 900, color: '#00ff88', fontFamily: "'JetBrains Mono', monospace", marginTop: '0.4rem' }}>
                 {status.latency_ms} <span style={{ fontSize: '0.9rem', color: '#8b9bb4', fontWeight: 400 }}>ms</span>
               </div>
-              <span style={{ fontSize: '0.75rem', color: '#8b9bb4' }}>Ultra-low prediction delay</span>
+              <span style={{ fontSize: '0.75rem', color: '#8b9bb4' }}>Real-time prediction delay</span>
             </div>
 
             {/* PRECISION */}
@@ -150,7 +156,7 @@ export default function App() {
               <div style={{ fontSize: '2.2rem', fontWeight: 900, color: '#33ccff', fontFamily: "'JetBrains Mono', monospace", marginTop: '0.4rem' }}>
                 {(status.metrics?.precision * 100).toFixed(1)}%
               </div>
-              <span style={{ fontSize: '0.75rem', color: '#8b9bb4' }}>Real-time prediction accuracy</span>
+              <span style={{ fontSize: '0.75rem', color: '#8b9bb4' }}>NOAA test precision</span>
             </div>
 
             {/* RECALL */}
@@ -159,7 +165,7 @@ export default function App() {
               <div style={{ fontSize: '2.2rem', fontWeight: 900, color: '#ffea00', fontFamily: "'JetBrains Mono', monospace", marginTop: '0.4rem' }}>
                 {(status.metrics?.recall * 100).toFixed(1)}%
               </div>
-              <span style={{ fontSize: '0.75rem', color: '#8b9bb4' }}>Flare event capture rate</span>
+              <span style={{ fontSize: '0.75rem', color: '#8b9bb4' }}>Flare event recall</span>
             </div>
 
             {/* F1 SCORE */}
@@ -216,7 +222,7 @@ export default function App() {
           {/* CURRENT REAL-TIME PREDICTION */}
           <div style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${currentColor}44`, borderRadius: '16px', padding: '1.5rem', boxShadow: `0 0 20px ${currentColor}11` }}>
             <h3 style={{ fontSize: '0.9rem', color: '#8b9bb4', textTransform: 'uppercase', marginBottom: '0.6rem', letterSpacing: '1px' }}>
-              🔥 LIVE FLARE PREDICTION & PROBABILITIES
+              🔥 REAL GOES X-RAY FLARE PREDICTION
             </h3>
             
             <div style={{ fontSize: '2.5rem', fontWeight: 900, color: currentColor, textShadow: `0 0 10px ${currentColor}` }}>
@@ -241,28 +247,26 @@ export default function App() {
 
         </div>
 
-        {/* SECTION 3: REAL-TIME STREAMING TELEMETRY CHART */}
+        {/* SECTION 3: REAL 7-DAY NOAA GOES TELEMETRY STREAM CHART */}
         <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '1.5rem' }}>
-          <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '1rem' }}>📈 REAL-TIME TELEMETRY DATA STREAM (SoLEXS & HEL1OS)</h3>
-          <div style={{ height: '300px', width: '100%' }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '1rem' }}>📈 REAL 7-DAY NOAA GOES-16/18 PRIMARY X-RAY TELEMETRY STREAM</h3>
+          <div style={{ height: '320px', width: '100%' }}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={history} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="solexsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ff3366" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#ff3366" stopOpacity={0.0}/>
-                  </linearGradient>
-                  <linearGradient id="heliosGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#33ccff" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#33ccff" stopOpacity={0.0}/>
+                  <linearGradient id="goesLongGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ffea00" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="#ffea00" stopOpacity={0.0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis dataKey="time" stroke="#8b9bb4" fontSize={11} />
-                <YAxis stroke="#8b9bb4" fontSize={11} scale="log" domain={[1, 'auto']} allowDataOverflow />
+                <YAxis stroke="#8b9bb4" fontSize={11} scale="log" domain={[1e-9, 1e-3]} allowDataOverflow />
                 <Tooltip contentStyle={{ background: '#0a0a14', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px' }} />
-                <Area type="monotone" dataKey="SoLEXS" name="SoLEXS Soft X-Ray" stroke="#ff3366" strokeWidth={2} fill="url(#solexsGrad)" />
-                <Area type="monotone" dataKey="HEL1OS" name="HEL1OS Hard X-Ray" stroke="#33ccff" strokeWidth={2} fill="url(#heliosGrad)" />
+                <ReferenceLine y={1e-6} stroke="#ffea00" strokeDasharray="3 3" label={{ value: "C-Class (1e-6 W/m²)", fill: "#ffea00", fontSize: 10 }} />
+                <ReferenceLine y={1e-5} stroke="#ff7b00" strokeDasharray="3 3" label={{ value: "M-Class (1e-5 W/m²)", fill: "#ff7b00", fontSize: 10 }} />
+                <ReferenceLine y={1e-4} stroke="#ff2a2a" strokeDasharray="3 3" label={{ value: "X-Class (1e-4 W/m²)", fill: "#ff2a2a", fontSize: 10 }} />
+                <Area type="monotone" dataKey="GOES_Long" name="GOES 0.1-0.8nm Flux (W/m²)" stroke="#ffea00" strokeWidth={2} fill="url(#goesLongGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -271,18 +275,19 @@ export default function App() {
         {/* SECTION 4: MULTI-HORIZON PREDICTIVE CARDS */}
         <div>
           <h3 style={{ fontSize: '1rem', color: '#8b9bb4', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '1rem', fontWeight: 700 }}>
-            🔮 MULTI-HORIZON PREDICTIVE LOOKAHEAD
+            🔮 MULTI-HORIZON PREDICTIVE LOOKAHEAD (T+15m to T+4h)
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             {['15m', '30m', '1h', '2h', '4h'].map(h => {
-              const hData = status.horizons?.[h] || { risk: 'NOMINAL', prob: 0.05 };
-              const hColor = riskColors[hData.risk] || '#00ff88';
+              const hData = status.horizons?.[h] || { risk: 0, prob: 0.05 };
+              const riskName = riskClassNames[hData.risk] || hData.risk || 'NOMINAL';
+              const hColor = riskColors[riskName] || '#00ff88';
               return (
                 <div key={h} style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${hColor}33`, borderRadius: '12px', padding: '1rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>T+{h}</span>
                     <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', borderRadius: '4px', background: `${hColor}22`, color: hColor, fontWeight: 700 }}>
-                      {hData.risk}
+                      {riskName}
                     </span>
                   </div>
                   <div style={{ fontSize: '1.5rem', fontWeight: 900, color: hColor, margin: '0.4rem 0', fontFamily: "'JetBrains Mono', monospace" }}>
@@ -297,28 +302,22 @@ export default function App() {
           </div>
         </div>
 
-        {/* SECTION 5: INTERACTIVE CONTROL & ANOMALY TESTING */}
+        {/* SECTION 5: REAL-WORLD STREAM CONTROLS */}
         <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '1.5rem' }}>
           <h3 style={{ fontSize: '0.9rem', color: '#8b9bb4', textTransform: 'uppercase', marginBottom: '1rem', letterSpacing: '1px' }}>
-            ⚙️ REAL-TIME STREAM CONTROLS & ANOMALY TESTING
+            ⚙️ REAL-WORLD MODEL CONTROLS
           </h3>
           <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
-            <button onClick={() => handleForceFlare('C')} style={{ background: 'rgba(255,234,0,0.15)', color: '#ffea00', border: '1px solid #ffea00', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>
-              ⚡ Force C-Class Spike
-            </button>
-            <button onClick={() => handleForceFlare('M')} style={{ background: 'rgba(255,123,0,0.15)', color: '#ff7b00', border: '1px solid #ff7b00', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>
-              🔥 Force M-Class Spike
-            </button>
-            <button onClick={() => handleForceFlare('X')} style={{ background: 'rgba(255,42,42,0.15)', color: '#ff2a2a', border: '1px solid #ff2a2a', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>
-              🚨 Force X-Class Flare
-            </button>
-
-            <button onClick={handleToggleLearning} style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer', marginLeft: 'auto', fontWeight: 700 }}>
+            <button onClick={handleToggleLearning} style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>
               {isLearningFrozen ? '▶️ Unfreeze Weights' : '⏸️ Freeze Weights'}
             </button>
 
             <button onClick={handleResetWeights} style={{ background: 'rgba(255,51,102,0.2)', color: '#ff3366', border: '1px solid #ff3366', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 700 }}>
               🔄 Reset Agent Weights
+            </button>
+
+            <button onClick={handleExportCSV} style={{ background: 'rgba(0,255,136,0.15)', color: '#00ff88', border: '1px solid #00ff88', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer', marginLeft: 'auto', fontWeight: 700 }}>
+              📥 Export NOAA 7-Day Telemetry CSV
             </button>
           </div>
         </div>

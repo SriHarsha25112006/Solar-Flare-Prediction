@@ -1,25 +1,18 @@
 {
-  "model_name": "Project Hail Online Adaptive Reinforcement Learning Agent",
+  "model_name": "Project Hail NOAA 7-Day Online Adaptive RL Agent",
   "feature_cols": [
+    "GOES_LONG_FLUX",
+    "GOES_SHORT_FLUX",
     "SoLEXS_COUNTS",
     "HEL1OS_COUNTS",
-    "GOES_XRAY_SHORT",
-    "GOES_XRAY_LONG",
-    "SOLAR_WIND_SPEED",
-    "IMF_BZ",
-    "PROTON_FLUX",
-    "SHARP_FREE_ENERGY",
-    "solexs_smooth",
-    "solexs_vel",
-    "solexs_accel",
-    "solexs_jerk",
-    "hel1os_smooth",
-    "hel1os_vel",
-    "hel1os_accel",
+    "goes_long_smooth",
+    "goes_long_vel",
+    "goes_long_accel",
+    "goes_short_smooth",
+    "goes_short_vel",
+    "goes_short_accel",
     "hardness_ratio",
-    "sharp_energy_rate",
-    "solexs_qpp_var_20s",
-    "hel1os_volatility_1m"
+    "long_flux_var_5m"
   ],
   "horizons": [
     "15m",
@@ -34,5 +27,5 @@
     "missed_m_class": -1.5,
     "missed_x_class": -2.5
   },
-  "trained_timestamp": "2026-07-26 18:59:10"
+  "trained_timestamp": "2026-07-26 19:17:25"
 }
