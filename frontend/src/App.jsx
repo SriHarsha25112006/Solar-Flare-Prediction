@@ -287,14 +287,31 @@ export default function App() {
               <div style={{ textAlign: 'right' }}>
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>CUMULATIVE REWARD</span>
                 <p style={{ fontSize: '1.6rem', fontWeight: 800, color: status.cumulative_reward >= 0 ? 'var(--neon-green)' : 'var(--neon-pink)', fontFamily: 'var(--font-mono)' }}>
-                  {status.cumulative_reward}
+                  {typeof status.cumulative_reward === 'number' ? status.cumulative_reward.toFixed(1) : status.cumulative_reward}
                 </p>
               </div>
             </div>
 
             <div style={{ background: 'rgba(0,0,0,0.4)', padding: '0.8rem', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              <div>Step Reward: <strong style={{ color: status.reward > 0 ? 'var(--neon-green)' : 'var(--neon-pink)' }}>{status.reward > 0 ? `+${status.reward}` : status.reward}</strong></div>
-              <div style={{ marginTop: '0.3rem' }}>True Skill Statistic (TSS): <strong style={{ color: '#fff' }}>{status.metrics?.tss}</strong></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Step Reward <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>(X/M Priority)</span>:</span>
+                <strong style={{
+                  color: status.reward >= 2 ? 'var(--neon-green)' : status.reward > 0 ? '#88ff88' : status.reward <= -8 ? 'var(--neon-pink)' : '#ff8888',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.95rem'
+                }}>
+                  {status.reward > 0 ? `+${status.reward}` : status.reward}
+                  {status.reward === 5 && ' ★ X-CLASS'}
+                  {status.reward === 2 && ' ✓ M-CLASS'}
+                  {status.reward === -20 && ' ✗ MISSED X'}
+                  {status.reward === -8 && ' ✗ MISSED M'}
+                </strong>
+              </div>
+              <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.8rem', flexWrap: 'wrap', fontSize: '0.7rem', opacity: 0.6 }}>
+                <span style={{ color: 'var(--neon-green)' }}>X=+5 M=+2 C=+0.5</span>
+                <span style={{ color: 'var(--neon-pink)' }}>MissX=-20 MissM=-8 MissC=-0.3</span>
+              </div>
+              <div style={{ marginTop: '0.4rem' }}>True Skill Statistic (TSS): <strong style={{ color: '#fff' }}>{status.metrics?.tss}</strong></div>
             </div>
           </div>
 

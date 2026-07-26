@@ -15,6 +15,9 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid value encountered in divide")
+
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
@@ -70,22 +73,58 @@ class OnlineAdaptiveAgent:
             x_scaled = x_2d
             
         probs = self.online_clf.predict_proba(x_scaled)[0]
-        pred_class = int(np.argmax(probs))
-        
+        # Numerical stability: large sample weights can cause NaN in softmax
+        probs = np.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0)
+        probs_sum = probs.sum()
+        if probs_sum > 0:
+            probs = probs / probs_sum
+        else:
+            probs = np.ones_like(probs) / len(probs)
+
         full_probs = [0.0, 0.0, 0.0, 0.0]
         for i, c in enumerate(self.online_clf.classes_):
             if c < 4:
                 full_probs[c] = float(probs[i])
-                
+
+        # --- Asymmetric decision thresholds (X/M-biased) ---
+        # Standard argmax would under-predict rare X/M events.
+        # Instead, escalate to X if P(X) > 0.15, to M if P(M) > 0.20.
+        # This biases toward over-alerting (few false negatives on X/M)
+        # at the cost of slightly more C-class false alarms — which is acceptable.
+        if full_probs[3] >= 0.15:          # X-class threshold
+            pred_class = 3
+        elif full_probs[2] >= 0.20:        # M-class threshold
+            pred_class = 2
+        elif full_probs[1] >= 0.30:        # C-class threshold
+            pred_class = 1
+        else:
+            pred_class = 0
+
         horizon_preds = {}
         for h in self.horizons:
             h_probs_raw = self.horizon_clfs[h].predict_proba(x_scaled)[0]
+            # Same numerical stability fix for horizon classifiers
+            h_probs_raw = np.nan_to_num(h_probs_raw, nan=0.0, posinf=1.0, neginf=0.0)
+            h_sum = h_probs_raw.sum()
+            if h_sum > 0:
+                h_probs_raw = h_probs_raw / h_sum
+            else:
+                h_probs_raw = np.ones_like(h_probs_raw) / len(h_probs_raw)
             h_full = [0.0, 0.0, 0.0, 0.0]
             for i, c in enumerate(self.horizon_clfs[h].classes_):
                 if c < 4:
                     h_full[c] = float(h_probs_raw[i])
-                    
-            h_pred_class = int(np.argmax(h_full))
+
+            # Apply same asymmetric thresholds to lookahead horizons
+            if h_full[3] >= 0.15:
+                h_pred_class = 3
+            elif h_full[2] >= 0.20:
+                h_pred_class = 2
+            elif h_full[1] >= 0.30:
+                h_pred_class = 1
+            else:
+                h_pred_class = 0
+
             flare_prob = float(sum(h_full[1:]))
             horizon_preds[h] = {
                 "pred_class": h_pred_class,
@@ -119,25 +158,45 @@ class OnlineAdaptiveAgent:
             
         pred_dict = self.predict(x_vector)
         pred_class = pred_dict["pred_class"]
-        
+
+        # --- X/M-Priority Asymmetric Reward Function ---
+        # Philosophy: Never miss X-class. Never miss M-class.
+        # Missing a few hundred C-class out of 8k is operationally acceptable.
         if pred_class == true_class:
-            reward = 1.0
+            # Correct predictions: reward scales with severity of event
+            class_correct_rewards = {0: 0.1, 1: 0.5, 2: 2.0, 3: 5.0}
+            reward = class_correct_rewards[true_class]
         elif true_class == 3 and pred_class < 3:
-            reward = -2.5
+            # CRITICAL MISS: Failed to detect X-class flare
+            reward = -20.0
         elif true_class == 2 and pred_class < 2:
-            reward = -1.5
+            # SEVERE MISS: Failed to detect M-class flare
+            reward = -8.0
+        elif true_class == 1 and pred_class == 0:
+            # LENIENT: Missed C-class — acceptable, small penalty
+            reward = -0.3
         else:
-            reward = -1.0
+            # False positive (over-predicted) — small penalty, bias toward alerting
+            reward = -0.5
 
         self.cumulative_reward += reward
         self.history_rewards.append(reward)
 
-        self.online_clf.partial_fit(x_scaled, [true_class])
+        # --- Class-weighted partial_fit (SGD sample weighting) ---
+        # X-class samples get 20x gradient weight, M-class get 8x,
+        # C-class 1x, NOMINAL 0.5x. This forces the SGD to spend
+        # most of its gradient capacity learning to detect X and M.
+        sample_weights = {0: 0.5, 1: 1.0, 2: 8.0, 3: 20.0}
+        sw = np.array([sample_weights[true_class]], dtype=np.float64)
+
+        self.online_clf.partial_fit(x_scaled, [true_class], sample_weight=sw)
         
         if horizon_targets:
             for h in self.horizons:
                 if h in horizon_targets:
-                    self.horizon_clfs[h].partial_fit(x_scaled, [horizon_targets[h]])
+                    h_true = horizon_targets[h]
+                    h_sw = np.array([sample_weights[h_true]], dtype=np.float64)
+                    self.horizon_clfs[h].partial_fit(x_scaled, [h_true], sample_weight=h_sw)
 
         self.weight_update_count += 1
 
