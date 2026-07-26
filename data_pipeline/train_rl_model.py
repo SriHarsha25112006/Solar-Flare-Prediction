@@ -1,8 +1,8 @@
 """
-train_rl_model.py — Real 7-Day NOAA Multi-Horizon Online Adaptive RL Agent
-==========================================================================
-Implements multi-horizon online SGD classifiers (T+0, T+15m, T+30m, T+1h, T+2h, T+4h)
-with reward optimization, dynamic weight adaptation, and performance logging.
+train_rl_model.py — Multi-Horizon NOAA Online Adaptive RL Agent Trainer
+======================================================================
+Trains the OnlineAdaptiveAgent with multi-horizon online SGD classifiers (T+0, T+15m, T+30m, T+1h, T+2h, T+4h)
+using policy gradient step updates, reward optimization, and metric logging.
 """
 
 import os
@@ -13,7 +13,6 @@ import time
 import numpy as np
 import pandas as pd
 
-# Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sklearn.linear_model import SGDClassifier
@@ -29,12 +28,10 @@ class OnlineAdaptiveAgent:
         self.num_features = len(feature_names)
         self.classes = np.array([0, 1, 2, 3]) # Nominal, C, M, X
         
-        # Primary current prediction classifier
         self.online_clf = SGDClassifier(
             loss='log_loss', penalty='l2', alpha=1e-4, learning_rate='optimal', random_state=42
         )
         
-        # Multi-horizon lookahead classifiers
         self.horizons = ["15m", "30m", "1h", "2h", "4h"]
         self.horizon_clfs = {
             h: SGDClassifier(loss='log_loss', penalty='l2', alpha=1e-4, learning_rate='optimal', random_state=42)
@@ -46,7 +43,6 @@ class OnlineAdaptiveAgent:
         self.weight_update_count = 0
         self.history_rewards = []
         
-        # Pre-fit all classifiers with initial uniform prior
         dummy_X = np.random.randn(20, self.num_features).astype(np.float64)
         dummy_y = np.random.choice(self.classes, 20)
         
@@ -60,7 +56,6 @@ class OnlineAdaptiveAgent:
         x_2d = np.array(x_vector, dtype=np.float64).reshape(1, -1)
         x_2d = np.nan_to_num(x_2d, nan=0.0, posinf=1e5, neginf=-1e5)
         
-        # Current prediction
         probs = self.online_clf.predict_proba(x_2d)[0]
         pred_class = int(np.argmax(probs))
         
@@ -69,7 +64,6 @@ class OnlineAdaptiveAgent:
             if c < 4:
                 full_probs[c] = float(probs[i])
                 
-        # Multi-horizon predictions
         horizon_preds = {}
         for h in self.horizons:
             h_probs_raw = self.horizon_clfs[h].predict_proba(x_2d)[0]
@@ -79,7 +73,6 @@ class OnlineAdaptiveAgent:
                     h_full[c] = float(h_probs_raw[i])
                     
             h_pred_class = int(np.argmax(h_full))
-            # Probability of flare activity (C/M/X)
             flare_prob = float(sum(h_full[1:]))
             horizon_preds[h] = {
                 "pred_class": h_pred_class,
@@ -136,7 +129,7 @@ class OnlineAdaptiveAgent:
         return reward, float(self.cumulative_reward)
 
 def train_and_save_pipeline():
-    tqdm.write("[START] Multi-Horizon NOAA 7-Day Online RL Agent Training...")
+    tqdm.write("[START] Multi-Horizon NOAA Online RL Pre-Training...")
     
     features_file = os.path.join(DATA_DIR, "noaa_7day_features.parquet")
     if not os.path.exists(features_file):
@@ -149,7 +142,7 @@ def train_and_save_pipeline():
         'GOES_LONG_FLUX', 'GOES_SHORT_FLUX', 'SoLEXS_COUNTS', 'HEL1OS_COUNTS',
         'goes_long_smooth', 'goes_long_vel', 'goes_long_accel',
         'goes_short_smooth', 'goes_short_vel', 'goes_short_accel',
-        'hardness_ratio', 'long_flux_var_5m'
+        'hardness_ratio', 'long_flux_var_5m', 'log_volatility_10m'
     ]
     
     tqdm.write(f"[STATS] Feature Set: {len(feature_cols)} physical signal channels")
@@ -157,7 +150,6 @@ def train_and_save_pipeline():
     X = df[feature_cols].fillna(0).values.astype(np.float64)
     y = df['PredictedClass'].values
     
-    # Extract horizon target labels
     horizon_targets_list = []
     for idx, r in df.iterrows():
         horizon_targets_list.append({
@@ -170,7 +162,7 @@ def train_and_save_pipeline():
     
     agent = OnlineAdaptiveAgent(feature_names=feature_cols)
     
-    tqdm.write("[MODEL] Multi-Horizon Pre-Training over 7-Day NOAA Telemetry Stream...")
+    tqdm.write("[MODEL] Multi-Horizon Pre-Training over Telemetry Stream...")
     for idx in tqdm(range(len(X)), desc="Sequential NOAA RL Updates"):
         x_sample = X[idx]
         y_sample = y[idx]
@@ -181,7 +173,7 @@ def train_and_save_pipeline():
     joblib.dump(agent, agent_path)
     
     config = {
-        "model_name": "Project Hail Multi-Horizon NOAA 7-Day RL Agent",
+        "model_name": "Project Hail Multi-Horizon NOAA RL Agent",
         "feature_cols": feature_cols,
         "horizons": ["15m", "30m", "1h", "2h", "4h"],
         "trained_timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
@@ -193,7 +185,7 @@ def train_and_save_pipeline():
         
     tqdm.write(f"[SAVE] Saved RL agent model to {agent_path}")
     tqdm.write(f"[SAVE] Saved configuration to {config_path}")
-    tqdm.write("[DONE] Multi-Horizon NOAA RL Agent Pre-Training Complete!")
+    tqdm.write("[DONE] RL Agent Pre-Training Complete!")
     
     return agent
 

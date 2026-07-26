@@ -36,7 +36,7 @@ feature_cols = [
     'GOES_LONG_FLUX', 'GOES_SHORT_FLUX', 'SoLEXS_COUNTS', 'HEL1OS_COUNTS',
     'goes_long_smooth', 'goes_long_vel', 'goes_long_accel',
     'goes_short_smooth', 'goes_short_vel', 'goes_short_accel',
-    'hardness_ratio', 'long_flux_var_5m'
+    'hardness_ratio', 'long_flux_var_5m', 'log_volatility_10m'
 ]
 
 _df = pd.DataFrame()
@@ -69,13 +69,10 @@ def load_data_and_model():
 
 load_data_and_model()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Periodic 15-Minute NOAA SWPC Ingestion Task (Low Time-Complexity)
-# ─────────────────────────────────────────────────────────────────────────────
 async def periodic_noaa_refresher():
-    """Periodically checks and pulls fresh NOAA 7-day telemetry every 15 mins."""
+    """Periodically checks and pulls fresh NOAA telemetry every 15 mins."""
     while True:
-        await asyncio.sleep(900) # 15 minutes (900 seconds)
+        await asyncio.sleep(900)
         try:
             print("[BACKGROUND TASK] Running periodic 15-minute NOAA SWPC telemetry sync...")
             await asyncio.to_thread(run_fetch_pipeline)
@@ -87,10 +84,8 @@ async def periodic_noaa_refresher():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: spawn periodic ingestion task
     asyncio.create_task(periodic_noaa_refresher())
     yield
-    # Shutdown
 
 app = FastAPI(title="Project Hail Real 7-Day NOAA RL Space Weather API", version="6.0.0", lifespan=lifespan)
 
@@ -175,7 +170,6 @@ def generate_solar_insights():
     m_count = int(np.sum((long_flux >= 1e-5) & (long_flux < 1e-4)))
     x_count = int(np.sum(long_flux >= 1e-4))
     
-    # Calculate NOAA Radio Blackout Scale (R1 to R5)
     if max_flux >= 2e-3: radio_scale = "R5 (Extreme Blackout)"
     elif max_flux >= 1e-3: radio_scale = "R4 (Severe Blackout)"
     elif max_flux >= 1e-4: radio_scale = f"R3 (Strong Blackout - X{max_flux/1e-4:.1f})"
@@ -184,7 +178,6 @@ def generate_solar_insights():
     elif max_flux >= 1e-6: radio_scale = "R0 (No Radio Blackout - C-Class)"
     else: radio_scale = "R0 (Normal Quiet Sun)"
     
-    # Calculate peak flux derivative (kinematic acceleration)
     if 'goes_long_vel' in _df.columns:
         max_vel = float(np.max(_df['goes_long_vel']))
     else:
