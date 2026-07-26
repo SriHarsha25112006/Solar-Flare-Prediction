@@ -2,8 +2,6 @@ fastapi
 uvicorn
 pandas
 aiofiles
-lightgbm
-xgboost
 scikit-learn
 scipy
 pyarrow
