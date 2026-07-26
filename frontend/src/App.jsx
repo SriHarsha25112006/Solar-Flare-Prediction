@@ -16,7 +16,17 @@ import {
 } from 'recharts';
 import './index.css';
 
-const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000/api' : '/api';
+const getApiUrl = () => {
+  const { hostname, port, protocol } = window.location;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    // If running under a Vite dev server (port 5173/3000), fallback to backend at 8000.
+    // Otherwise, use the port uvicorn is currently binding to.
+    const targetPort = (port === '5173' || port === '3000' || !port) ? '8000' : port;
+    return `${protocol}//${hostname}:${targetPort}/api`;
+  }
+  return '/api';
+};
+const API_URL = getApiUrl();
 
 export default function App() {
   const [status, setStatus] = useState(null);
