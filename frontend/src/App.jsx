@@ -10,7 +10,9 @@ export default function App() {
   const [status, setStatus] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [connMode, setConnMode] = useState('CONNECTING'); // WEBSOCKET, REST_FALLBACK, CONNECTING
   const wsRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -30,28 +32,65 @@ export default function App() {
     }
   }, []);
 
+  // WebSockets Connection with Auto-Reconnect & Fail-Safe Polling
   useEffect(() => {
     fetchData();
-    const wsUrl = window.location.hostname === 'localhost'
-      ? 'ws://localhost:8000/ws/telemetry'
-      : `wss://${window.location.hostname}/ws/telemetry`;
 
-    wsRef.current = new WebSocket(wsUrl);
-    wsRef.current.onmessage = (event) => {
+    // Fail-safe REST polling interval (every 2 seconds if WebSocket drops)
+    const pollInterval = setInterval(() => {
+      if (connMode !== 'WEBSOCKET') {
+        fetchData();
+      }
+    }, 2000);
+
+    const connectWebSocket = () => {
       try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'telemetry') {
-          setStatus(payload.status);
-          if (Array.isArray(payload.history)) setHistory(payload.history);
-          setLoading(false);
-        }
-      } catch (e) {}
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.hostname === 'localhost' ? 'localhost:8000' : window.location.host;
+        const wsUrl = `${protocol}//${host}/ws/telemetry`;
+
+        wsRef.current = new WebSocket(wsUrl);
+
+        wsRef.current.onopen = () => {
+          setConnMode('WEBSOCKET');
+          if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        };
+
+        wsRef.current.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload.type === 'telemetry') {
+              setStatus(payload.status);
+              if (Array.isArray(payload.history)) setHistory(payload.history);
+              setConnMode('WEBSOCKET');
+              setLoading(false);
+            }
+          } catch (e) {}
+        };
+
+        wsRef.current.onerror = () => {
+          setConnMode('REST_FALLBACK');
+        };
+
+        wsRef.current.onclose = () => {
+          setConnMode('REST_FALLBACK');
+          // Auto-reconnect after 3 seconds
+          reconnectTimerRef.current = setTimeout(connectWebSocket, 3000);
+        };
+      } catch (e) {
+        setConnMode('REST_FALLBACK');
+        reconnectTimerRef.current = setTimeout(connectWebSocket, 3000);
+      }
     };
+
+    connectWebSocket();
 
     return () => {
+      clearInterval(pollInterval);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [fetchData]);
+  }, [fetchData, connMode]);
 
   const handleExportCSV = () => {
     if (!history || history.length === 0) return;
@@ -83,7 +122,6 @@ export default function App() {
     'X-CLASS': 'var(--neon-pink)'
   };
   const currentColor = riskColors[status.RiskLabel] || 'var(--neon-green)';
-
   const insights = status.insights || {};
 
   return (
@@ -106,6 +144,9 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.8rem', background: connMode === 'WEBSOCKET' ? 'rgba(0, 255, 136, 0.15)' : 'rgba(255, 234, 0, 0.15)', color: connMode === 'WEBSOCKET' ? 'var(--neon-green)' : 'var(--neon-yellow)', border: `1px solid ${connMode === 'WEBSOCKET' ? 'var(--neon-green)' : 'var(--neon-yellow)'}`, padding: '0.4rem 0.8rem', borderRadius: '8px', fontWeight: 700 }}>
+              {connMode === 'WEBSOCKET' ? '⚡ WS STREAM LIVE' : '📡 REST STREAM FALLBACK'}
+            </span>
             <span style={{ fontSize: '0.8rem', background: 'rgba(0, 243, 255, 0.08)', color: 'var(--neon-cyan)', border: '1px solid rgba(0, 243, 255, 0.3)', padding: '0.4rem 0.8rem', borderRadius: '8px', fontFamily: 'var(--font-mono)' }}>
               SYNC: 15-MIN PERIODIC / {status.timestamp}
             </span>
@@ -126,7 +167,6 @@ export default function App() {
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.2rem' }}>
             
-            {/* PEAK FLUX MAGNITUDE */}
             <div className="neon-panel" style={{ padding: '1.2rem', '--glow-color': 'var(--neon-yellow)' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>7-DAY PEAK X-RAY FLUX</span>
               <div className="glow-text" style={{ fontSize: '1.8rem', fontWeight: 900, color: 'var(--neon-yellow)', fontFamily: 'var(--font-mono)', marginTop: '0.4rem', '--glow-color': 'var(--neon-yellow)' }}>
@@ -135,7 +175,6 @@ export default function App() {
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Peak Time: {insights.peak_timestamp?.split(' ')[1] || 'N/A'}</span>
             </div>
 
-            {/* RADIO BLACKOUT SCALE */}
             <div className="neon-panel" style={{ padding: '1.2rem', '--glow-color': 'var(--neon-pink)' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>NOAA RADIO BLACKOUT SCALE</span>
               <div className="glow-text" style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--neon-pink)', marginTop: '0.6rem', '--glow-color': 'var(--neon-pink)' }}>
@@ -144,7 +183,6 @@ export default function App() {
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ionospheric impact assessment</span>
             </div>
 
-            {/* TOTAL FLARE SPIKES DETECTED */}
             <div className="neon-panel" style={{ padding: '1.2rem', '--glow-color': 'var(--neon-cyan)' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>HISTORICAL FLARE SPIKES (7 DAYS)</span>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.6rem' }}>
@@ -163,7 +201,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* MAGNETIC GROWTH KINEMATICS */}
             <div className="neon-panel" style={{ padding: '1.2rem', '--glow-color': 'var(--neon-purple)' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>MAX FLUX RISE RATE (dF/dt)</span>
               <div className="glow-text" style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--neon-purple)', fontFamily: 'var(--font-mono)', marginTop: '0.5rem', '--glow-color': 'var(--neon-purple)' }}>
